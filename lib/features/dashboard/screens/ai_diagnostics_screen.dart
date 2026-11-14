@@ -2,8 +2,14 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'dart:convert';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
+
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_litert/flutter_litert.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_litert/flutter_litert.dart';
 import 'package:nasa_health_app/core/ml/ai_input_models.dart';
@@ -55,8 +61,10 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
     with SingleTickerProviderStateMixin {
   late final TabController _tabController;
   final _TfliteEngine _engine = _TfliteEngine();
+  final _TfliteEngine _engine = _TfliteEngine();
   CameraController? _cam;
   bool _camBusy = false;
+  List<double>? _frameTensor; // last camera photo (null = use angle sliders)
   List<double>? _frameTensor; // last camera photo (null = use angle sliders)
 
   // --- MODULE A STATE (LateInitializationError tamamen önlendi: anında başlatılıyor) ---
@@ -89,6 +97,12 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
   double _spineCurvDeg = 12.0;
   double _postureRisk = 0.09;
   String _postureEngineStatus = 'READY: posture_keypoints.keras';
+  // --- MODULE C STATE ---
+  String _selectedPosturePreset = 'Nominal Microgravity Neutral Posture';
+  double _neckDevDeg = 18.0;
+  double _spineCurvDeg = 12.0;
+  double _postureRisk = 0.09;
+  String _postureEngineStatus = 'READY: posture_keypoints.keras';
 
   @override
   void initState() {
@@ -103,21 +117,114 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
   }
 
   Future<void> _initializeModelsAsync() async {
+  Future<void> _initializeModelsAsync() async {
     try {
+      await _engine.load();
+      await _loadMitBihClassSample(0, notify: false);
+      await _evaluateModuleB(showToast: false);
+      await _evaluateModuleC(showToast: false);
       await _engine.load();
       await _loadMitBihClassSample(0, notify: false);
       await _evaluateModuleB(showToast: false);
       await _evaluateModuleC(showToast: false);
     } catch (e) {
       _toast('Model load error: $e');
+      _toast('Model load error: $e');
     }
   }
 
   void _toast(String text) {
     if (!mounted) return;
+  void _toast(String text) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(backgroundColor: NasaColors.deepSpaceBlue, content: Text(text)),
     );
+  }
+
+  Future<void> _startCamera() async {
+    final List<CameraDescription> cams = await availableCameras();
+    final CameraDescription cam = cams.firstWhere(
+      (CameraDescription c) => c.lensDirection == CameraLensDirection.back,
+      orElse: () => cams.first,
+    );
+    final CameraController ctrl =
+        CameraController(cam, ResolutionPreset.medium, enableAudio: false);
+    await ctrl.initialize();
+    if (!mounted) {
+      await ctrl.dispose();
+      return;
+    }
+    setState(() => _cam = ctrl);
+  }
+
+  /// First press starts the camera, second press takes a photo and runs the real model.
+  Future<void> _captureAndRunPosture() async {
+    if (_camBusy) return;
+    setState(() => _camBusy = true);
+    try {
+      if (_cam == null) {
+        await _startCamera();
+        _toast('Camera ready. Point it at the person and press again.');
+        return;
+      }
+      final XFile file = await _cam!.takePicture();
+      _frameTensor = await _TfliteEngine.photoToTensor(await file.readAsBytes());
+      await _evaluateModuleC(showToast: true);
+    } catch (e) {
+      _toast('Camera error: $e');
+    } finally {
+      if (mounted) setState(() => _camBusy = false);
+    }
+  }
+
+  Widget _postureFrame(Color postureColor) {
+    final CameraController? cam = _cam;
+    if (cam != null && cam.value.isInitialized) {
+      final Size? ps = cam.value.previewSize;
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: FittedBox(
+          fit: BoxFit.cover,
+          child: SizedBox(
+            width: ps?.height ?? 224,
+            height: ps?.width ?? 224,
+            child: CameraPreview(cam),
+          ),
+        ),
+      );
+    }
+    return CustomPaint(
+      painter: _PostureKeypointsPainter(
+        neckDevDeg: _neckDevDeg,
+        spineCurvDeg: _spineCurvDeg,
+        color: postureColor,
+      ),
+    );
+  }
+
+  void switchToTab(int index) {
+    if (mounted) {
+      _tabController.animateTo(index.clamp(0, 2));
+    }
+  }
+
+  Future<void> _loadMitBihClassSample(int classIdx, {bool notify = true}) async {
+    final List<double> beat = EcgModelInput.generateMitBihSample(classIdx);
+    final EcgModelInput input = EcgModelInput(beat);
+    await _engine.load();
+    final List<double> probs = _engine.runEcg(beat);
+
+    if (!mounted) return;
+    setState(() {
+      _selectedEcgClassIndex = classIdx;
+      _ecgSamples = beat;
+      _ecgRawController.text = beat.join(', ');
+      _ecgProbs = probs;
+      _computedBpm = input.estimateBpm();
+      _ecgEngineStatus = 'TFLITE ecg_heartbeat';
+    });
+    if (notify) _emitEvaluation();
   }
 
   Future<void> _startCamera() async {
@@ -220,12 +327,17 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
     await _engine.load();
     final List<double> probs = _engine.runEcg(beat187);
     final double anomaly = (1.0 - probs[0]).clamp(0.0, 1.0);
+    await _engine.load();
+    final List<double> probs = _engine.runEcg(beat187);
+    final double anomaly = (1.0 - probs[0]).clamp(0.0, 1.0);
 
     if (!mounted) return;
     setState(() {
       _ecgSamples = beat187;
       _ecgProbs = probs;
+      _ecgProbs = probs;
       _computedBpm = input.estimateBpm();
+      _ecgEngineStatus = 'TFLITE ecg_heartbeat';
       _ecgEngineStatus = 'TFLITE ecg_heartbeat';
     });
 
@@ -234,6 +346,7 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
       SnackBar(
         backgroundColor: NasaColors.deepSpaceBlue,
         content: Text(
+          '$_ecgEngineStatus -> Anomaly: ${(anomaly * 100).toStringAsFixed(1)}%',
           '$_ecgEngineStatus -> Anomaly: ${(anomaly * 100).toStringAsFixed(1)}%',
         ),
       ),
@@ -260,13 +373,65 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
     ];
     await _engine.load();
     final ({List<double> z, double risk}) res = _engine.runCardio(raw);
+    final double hM = _heightCm / 100.0;
+    final double bmiVal = hM <= 0 ? 0.0 : _weightKg / (hM * hM);
+    // [age, gender(1=F,2=M), height, weight, ap_hi, ap_lo, cholesterol, gluc, smoke, alco, active, bmi]
+    final List<double> raw = <double>[
+      _ageYears,
+      _gender.toDouble(),
+      _heightCm,
+      _weightKg,
+      _apHi,
+      _apLo,
+      _cholesterol.toDouble(),
+      _gluc.toDouble(),
+      _smoke ? 1.0 : 0.0,
+      _alco ? 1.0 : 0.0,
+      _active ? 1.0 : 0.0,
+      bmiVal,
+    ];
+    await _engine.load();
+    final ({List<double> z, double risk}) res = _engine.runCardio(raw);
 
     if (!mounted) return;
     setState(() {
       _standardizedZ = res.z;
+      _standardizedZ = res.z;
       _cardioRisk = res.risk;
       _cardioEngineStatus = 'TFLITE cardiovascular';
+      _cardioEngineStatus = 'TFLITE cardiovascular';
     });
+
+    _emitEvaluation();
+    if (showToast) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: NasaColors.deepSpaceBlue,
+          content: Text(
+            '$_cardioEngineStatus -> Risk: ${(res.risk * 100).toStringAsFixed(1)}%',
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _evaluateModuleC({bool showToast = true}) async {
+    double risk;
+    String engine;
+    final List<double>? frame = _frameTensor;
+    if (frame != null) {
+      await _engine.load();
+      risk = _engine.runPosture(frame);
+      engine = 'TFLITE posture (camera frame)';
+    } else {
+      // No camera frame: angle-based estimate (ok = 15/10 deg, bad = 45/35 deg).
+      final double neck = ((_neckDevDeg - 15.0) / 30.0).clamp(0.0, 1.0);
+      final double spine = ((_spineCurvDeg - 10.0) / 25.0).clamp(0.0, 1.0);
+      risk = (0.1 + 0.9 * (0.5 * neck + 0.5 * spine)).clamp(0.0, 1.0);
+      engine = 'ANGLE ESTIMATE (no camera frame)';
+    }
+
+    if (!mounted) return;
 
     _emitEvaluation();
     if (showToast) {
@@ -301,7 +466,48 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
     setState(() {
       _postureRisk = risk;
       _postureEngineStatus = engine;
+      _postureRisk = risk;
+      _postureEngineStatus = engine;
     });
+
+    _emitEvaluation();
+    if (showToast) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: NasaColors.deepSpaceBlue,
+          content: Text(
+            '$_postureEngineStatus -> Posture Risk: ${(risk * 100).toStringAsFixed(1)}%',
+          ),
+        ),
+      );
+    }
+  }
+
+  void _emitEvaluation() {
+    int maxIdx = 0;
+    for (int i = 1; i < _ecgProbs.length; i++) {
+      if (_ecgProbs[i] > _ecgProbs[maxIdx]) maxIdx = i;
+    }
+
+    final double anomalyScore = (1.0 - _ecgProbs[0]).clamp(0.0, 1.0);
+    final double heightM = _heightCm / 100.0;
+    final double bmi = _weightKg / (heightM * heightM);
+
+    widget.onModelsEvaluated?.call(
+      AiEvaluationBundle(
+        ecgAnomalyRisk: anomalyScore,
+        heartRateBpm: _computedBpm,
+        dominantEcgClass: EcgModelInput.classDescriptions[maxIdx],
+        cardioRisk: _cardioRisk,
+        systolic: _apHi.round(),
+        diastolic: _apLo.round(),
+        bmi: bmi,
+        postureRisk: _postureRisk,
+        neckDevDeg: _neckDevDeg,
+        spineCurvDeg: _spineCurvDeg,
+        activeEngineLabel: 'ON-DEVICE TFLITE',
+      ),
+    );
 
     _emitEvaluation();
     if (showToast) {
@@ -347,6 +553,7 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
   void dispose() {
     _tabController.dispose();
     _cam?.dispose();
+    _engine.dispose();
     _engine.dispose();
     _ecgRawController.dispose();
     super.dispose();
@@ -498,6 +705,8 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
             style: const TextStyle(fontSize: 11, fontFamily: 'monospace'),
             decoration: InputDecoration(
               labelText: '187 Float32 Samples (0.0 .. 1.0, comma-separated)',
+              labelStyle:
+                  const TextStyle(color: NasaColors.biometricCyan, fontSize: 12),
               labelStyle:
                   const TextStyle(color: NasaColors.biometricCyan, fontSize: 12),
               filled: true,
@@ -778,6 +987,8 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
                 SwitchListTile(
                   title:
                       const Text('9. smoke (0 or 1)', style: TextStyle(fontSize: 13)),
+                  title:
+                      const Text('9. smoke (0 or 1)', style: TextStyle(fontSize: 13)),
                   value: _smoke,
                   activeThumbColor: NasaColors.orbitRed,
                   onChanged: (bool v) {
@@ -786,6 +997,8 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
                   },
                 ),
                 SwitchListTile(
+                  title:
+                      const Text('10. alco (0 or 1)', style: TextStyle(fontSize: 13)),
                   title:
                       const Text('10. alco (0 or 1)', style: TextStyle(fontSize: 13)),
                   value: _alco,
@@ -889,7 +1102,11 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
                 padding: const EdgeInsets.symmetric(vertical: 14),
               ),
               onPressed: _camBusy ? null : _captureAndRunPosture,
+              onPressed: _camBusy ? null : _captureAndRunPosture,
               icon: const Icon(Icons.camera_alt_rounded),
+              label: Text(
+                _cam == null ? 'START CAMERA' : 'CAPTURE PHOTO & RUN POSTURE MODEL',
+                style: const TextStyle(fontWeight: FontWeight.bold),
               label: Text(
                 _cam == null ? 'START CAMERA' : 'CAPTURE PHOTO & RUN POSTURE MODEL',
                 style: const TextStyle(fontWeight: FontWeight.bold),
@@ -978,6 +1195,87 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
             ),
           ),
           const SizedBox(height: 16),
+          _buildSliderRow(
+            label: 'Neck Deviation Angle (neck_dev: ok=15°, bad=45°)',
+            value: _neckDevDeg,
+            min: 5,
+            max: 55,
+            unit: 'deg',
+            onChanged: (double v) {
+              setState(() {
+                _neckDevDeg = v;
+                _frameTensor = null;
+              });
+              _evaluateModuleC(showToast: false);
+            },
+          ),
+          _buildSliderRow(
+            label: 'Spine Curvature Angle (spine_curv: ok=10°, bad=35°)',
+            value: _spineCurvDeg,
+            min: 5,
+            max: 45,
+            unit: 'deg',
+            onChanged: (double v) {
+              setState(() {
+                _spineCurvDeg = v;
+                _frameTensor = null;
+              });
+              _evaluateModuleC(showToast: false);
+            },
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'POSTURE KEYPOINT PRESETS (melsmm/posture-keypoints-detection):',
+            style: TextStyle(
+                color: NasaColors.nebulaGrey,
+                fontSize: 11,
+                fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          Card(
+            margin: EdgeInsets.zero,
+            color: NasaColors.stationGrey,
+            child: Column(
+              children: >[
+                {
+                  'name': 'Nominal Microgravity Neutral Posture',
+                  'neck': 16.0,
+                  'spine': 11.0,
+                },
+                {
+                  'name': 'EVA Suit Lumbar & Neck Forward Strain',
+                  'neck': 29.0,
+                  'spine': 22.0,
+                },
+                {
+                  'name': 'Severe 0G Slouch / Kyphotic Curvature',
+                  'neck': 42.0,
+                  'spine': 33.0,
+                },
+              ].map((Map<String, dynamic> item) {
+                final String name = item['name'] as String;
+                return ListTile(
+                  leading: Icon(
+                    _selectedPosturePreset == name
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_off,
+                    color: NasaColors.biometricCyan,
+                  ),
+                  title: Text(name, style: const TextStyle(fontSize: 12)),
+                  onTap: () {
+                    setState(() {
+                      _selectedPosturePreset = name;
+                      _neckDevDeg = item['neck'] as double;
+                      _spineCurvDeg = item['spine'] as double;
+                      _frameTensor = null;
+                    });
+                    _evaluateModuleC(showToast: true);
+                  },
+                );
+              }).toList(),
+            ),
+          ),
+          const SizedBox(height: 16),
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
@@ -993,6 +1291,7 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
                   style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                 ),
                 Text(
+                  '${(_postureRisk * 100).toStringAsFixed(1)}%',
                   '${(_postureRisk * 100).toStringAsFixed(1)}%',
                   style: TextStyle(
                     color: postureColor,
@@ -1035,6 +1334,8 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
           ),
           const SizedBox(height: 4),
           Text('• Input: $inputSpec',
+              style:
+                  const TextStyle(color: NasaColors.biometricCyan, fontSize: 11)),
               style:
                   const TextStyle(color: NasaColors.biometricCyan, fontSize: 11)),
           Text('• Output: $outputSpec',
@@ -1216,6 +1517,93 @@ class _PostureKeypointsPainter extends CustomPainter {
   bool shouldRepaint(covariant _PostureKeypointsPainter oldDelegate) => true;
 }
 
+/// Runs the 3 TFLite models (assets/models/*.tflite) fully inside this file.
+class _TfliteEngine {
+  Interpreter? _ecg;
+  Interpreter? _cardio;
+  Interpreter? _posture;
+  List<double> _mean = <double>[];
+  List<double> _scale = <double>[];
+  Future<void>? _loading;
+
+  Future<void> load() {
+    return _loading ??= _doLoad().catchError((Object e) {
+      _loading = null; // allow retry
+      throw e;
+    });
+  }
+
+  Future<void> _doLoad() async {
+    _ecg = await Interpreter.fromAsset('assets/models/ecg_heartbeat.tflite');
+    _cardio = await Interpreter.fromAsset('assets/models/cardiovascular.tflite');
+    _posture = await Interpreter.fromAsset('assets/models/posture_keypoints.tflite');
+    final Map<String, dynamic> scaler = jsonDecode(
+      await rootBundle.loadString('assets/models/cardiovascular_scaler.json'),
+    ) as Map<String, dynamic>;
+    _mean = (scaler['mean'] as List).map((e) => (e as num).toDouble()).toList();
+    _scale = (scaler['scale'] as List).map((e) => (e as num).toDouble()).toList();
+  }
+
+  /// ECG [1,187,1] -> probabilities [N, S, V, F, Q]
+  List<double> runEcg(List<double> beat187) {
+    final input = <List<List<double>>>[
+      List<List<double>>.generate(187, (i) => <double>[beat187[i]]),
+    ];
+    final output = <List<double>>[List<double>.filled(5, 0.0)];
+    _ecg!.run(input, output);
+    return List<double>.from(output[0]);
+  }
+
+  /// 12 raw features (gender 1=F, 2=M) -> standardized z and risk 0..1
+  ({List<double> z, double risk}) runCardio(List<double> raw) {
+    final List<double> z =
+        List<double>.generate(12, (i) => (raw[i] - _mean[i]) / _scale[i]);
+    final input = <List<double>>[z];
+    final output = <List<double>>[List<double>.filled(1, 0.0)];
+    _cardio!.run(input, output);
+    return (z: z, risk: output[0][0].clamp(0.0, 1.0).toDouble());
+  }
+
+  /// Flat RGB tensor (224*224*3, 0..255) -> posture risk 0..1
+  double runPosture(List<double> flatRgb) {
+    final input = <List<List<List<double>>>>[
+      List<List<List<double>>>.generate(224, (y) {
+        return List<List<double>>.generate(224, (x) {
+          final int o = (y * 224 + x) * 3;
+          return <double>[flatRgb[o], flatRgb[o + 1], flatRgb[o + 2]];
+        });
+      }),
+    ];
+    final output = <List<double>>[List<double>.filled(1, 0.0)];
+    _posture!.run(input, output);
+    return output[0][0].clamp(0.0, 1.0).toDouble();
+  }
+
+  /// Photo bytes -> 224x224 RGB tensor
+  static Future<List<double>> photoToTensor(Uint8List bytes) async {
+    final ui.Codec codec =
+        await ui.instantiateImageCodec(bytes, targetWidth: 224, targetHeight: 224);
+    final ui.FrameInfo frame = await codec.getNextFrame();
+    final ByteData? data =
+        await frame.image.toByteData(format: ui.ImageByteFormat.rawRgba);
+    final Uint8List rgba = data!.buffer.asUint8List();
+    final List<double> out = List<double>.filled(224 * 224 * 3, 0.0);
+    for (int i = 0; i < 224 * 224; i++) {
+      out[i * 3] = rgba[i * 4].toDouble();
+      out[i * 3 + 1] = rgba[i * 4 + 1].toDouble();
+      out[i * 3 + 2] = rgba[i * 4 + 2].toDouble();
+    }
+    frame.image.dispose();
+    codec.dispose();
+    return out;
+  }
+
+  void dispose() {
+    _ecg?.close();
+    _cardio?.close();
+    _posture?.close();
+  }
+}
 /// Runs the 3 TFLite models (assets/models/*.tflite) fully inside this file.
 class _TfliteEngine {
   Interpreter? _ecg;
