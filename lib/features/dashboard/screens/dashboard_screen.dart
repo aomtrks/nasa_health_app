@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:nasa_health_app/core/ml/ai_input_models.dart';
 import 'package:nasa_health_app/core/theme/app_theme.dart';
 import 'package:nasa_health_app/features/dashboard/screens/ai_diagnostics_screen.dart';
+import 'package:nasa_health_app/features/dashboard/widgets/astronaut_3d_viewer.dart';
 import 'package:nasa_health_app/features/dashboard/widgets/nasa_drawer.dart';
 
 class MissionTaskItem {
@@ -321,6 +322,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _buildMainDashboardTab() {
     final BodyPartStatus activePartInfo = _bodyPartData[_selectedBodyPart]!;
+    final SpaceEnvironmentProfile envProfile =
+        _envProfiles[_selectedEnvironment]!;
     final Color bpColor = _liveCardioRisk > 0.45
         ? NasaColors.orbitRed
         : (_liveCardioRisk > 0.28
@@ -339,7 +342,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
         children: [
           _buildEnvironmentSelector(),
           const SizedBox(height: 16),
-          _build3DBodyViewportPlaceholder(activePartInfo),
+
+          // PERFECTUM_3D ANATOMİK İNSAN BEDENİ (Kemik + Kas + Damar Sistemi)
+          Astronaut3DViewer(
+            selectedBodyRegion: _selectedBodyPart,
+            onBodyRegionSelected: (String region) {
+              setState(() => _selectedBodyPart = region);
+            },
+            cardioRisk: _liveCardioRisk,
+            postureRisk: _livePostureRisk,
+            neuroStress: _faceState.stress,
+            heartRateBpm: _liveHeartRate,
+            gravityLabel: envProfile.gravityLabel,
+          ),
+
           const SizedBox(height: 16),
           _buildDiagnosticActionCard(activePartInfo),
           const SizedBox(height: 20),
@@ -495,7 +511,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                   BodyPartStatus(
                                 status: _liveEcgStatus,
                                 color: _liveEcgColor,
-                                hazard: 'Manual Telemetry + ecg_heartbeat.keras',
+                                hazard: 'Manual Telemetry + ecg_heartbeat.tflite',
                                 insight:
                                     'Updated HR: $_liveHeartRate bpm | BP: $_liveSystolic/$_liveDiastolic mmHg.',
                                 action: tempHr > 100
@@ -865,109 +881,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
           );
         },
-      ),
-    );
-  }
-
-  Widget _build3DBodyViewportPlaceholder(BodyPartStatus activePartInfo) {
-    final Color activeColor = activePartInfo.color;
-    final SpaceEnvironmentProfile envProfile =
-        _envProfiles[_selectedEnvironment]!;
-
-    return Container(
-      height: 290,
-      width: double.infinity,
-      decoration: BoxDecoration(
-        color: NasaColors.stationGrey,
-        borderRadius: BorderRadius.circular(20),
-        border:
-            Border.all(color: activeColor.withValues(alpha: 0.6), width: 1.5),
-        gradient: RadialGradient(
-          colors: [
-            activeColor.withValues(alpha: 0.18),
-            NasaColors.stationGrey,
-            NasaColors.darkMatter,
-          ],
-          radius: 0.85,
-        ),
-      ),
-      child: Stack(
-        children: [
-          Positioned(
-            top: 12,
-            left: 14,
-            right: 14,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Flexible(
-                  child: Text(
-                    'TARGET: ${_selectedBodyPart.toUpperCase()}',
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: NasaColors.pureWhite,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 12,
-                    ),
-                  ),
-                ),
-                Text(
-                  envProfile.gravityLabel,
-                  style: const TextStyle(
-                      color: NasaColors.biometricCyan, fontSize: 11),
-                ),
-              ],
-            ),
-          ),
-          Center(
-            child: Icon(
-              Icons.accessibility_new_rounded,
-              size: 135,
-              color: activeColor.withValues(alpha: 0.85),
-            ),
-          ),
-          Positioned(
-            bottom: 12,
-            left: 10,
-            right: 10,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: _bodyPartData.keys.map((String partName) {
-                final bool isSelected = _selectedBodyPart == partName;
-                final Color partColor = _bodyPartData[partName]!.color;
-                return GestureDetector(
-                  onTap: () => setState(() => _selectedBodyPart = partName),
-                  child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: isSelected
-                          ? partColor.withValues(alpha: 0.25)
-                          : NasaColors.darkMatter.withValues(alpha: 0.7),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                        color: isSelected
-                            ? partColor
-                            : NasaColors.nebulaGrey.withValues(alpha: 0.3),
-                      ),
-                    ),
-                    child: Text(
-                      partName.split(' ').first,
-                      style: TextStyle(
-                        color: isSelected
-                            ? NasaColors.pureWhite
-                            : NasaColors.nebulaGrey,
-                        fontSize: 11,
-                        fontWeight:
-                            isSelected ? FontWeight.bold : FontWeight.normal,
-                      ),
-                    ),
-                  ),
-                );
-              }).toList(),
-            ),
-          ),
-        ],
       ),
     );
   }
