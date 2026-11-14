@@ -1,3 +1,4 @@
+import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:nasa_health_app/core/ml/ai_input_models.dart';
 import 'package:nasa_health_app/core/theme/app_theme.dart';
@@ -47,6 +48,11 @@ class AiDiagnosticsScreen extends StatefulWidget {
 class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
     with SingleTickerProviderStateMixin {
   late final TabController _tabController;
+  final HealthAiService _ai = HealthAiService();
+  bool _aiReady = false;
+  CameraController? _cam;
+  bool _camBusy = false;
+  bool _postureMeasured = false;
 
   // --- MODULE A STATE (LateInitializationError tamamen önlendi: anında başlatılıyor) ---
   int _selectedEcgClassIndex = 0;
@@ -72,12 +78,9 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
   List<double> _standardizedZ = List<double>.filled(12, 0.0);
   String _cardioEngineStatus = 'READY: cardiovascular.keras';
 
-  // --- MODULE C STATE ---
-  String _selectedPosturePreset = 'Nominal Microgravity Neutral Posture';
-  double _neckDevDeg = 18.0;
-  double _spineCurvDeg = 12.0;
-  double _postureRisk = 0.09;
-  String _postureEngineStatus = 'READY: posture_keypoints.keras';
+  // --- MODEL C (POSTURE [1, 224, 224, 3]) STATE ---
+  bool _isTensorReady = false;
+  double _postureRiskOutput = 0.14;
 
   @override
   void initState() {
@@ -91,33 +94,24 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
     _initializeModelsAsync();
   }
 
-  Future<void> _initializeModelsAsync() async {
-    await _loadMitBihClassSample(0, notify: false);
-    await _evaluateModuleB(showToast: false);
-    await _evaluateModuleC(showToast: false);
-  }
-
-  void switchToTab(int index) {
-    if (mounted) {
-      _tabController.animateTo(index.clamp(0, 2));
+  Future<void> _initAi() async {
+    try {
+      await _ai.load();
+      if (!mounted) return;
+      setState(() => _aiReady = true);
+      _evalA();
+      _evalB();
+      _notifyDashboard();
+    } catch (e) {
+      if (!mounted) return;
+      _showMsg('Model load error: $e');
     }
   }
 
-  Future<void> _loadMitBihClassSample(int classIdx, {bool notify = true}) async {
-    final List<double> beat = EcgModelInput.generateMitBihSample(classIdx);
-    final EcgModelInput input = EcgModelInput(beat);
-    final EcgPredictionResult res = await NasaAiService.runEcgModel(input);
-
-    if (!mounted) return;
-    setState(() {
-      _selectedEcgClassIndex = classIdx;
-      _ecgSamples = beat;
-      _ecgRawController.text = beat.join(', ');
-      _ecgProbs = res.probabilities;
-      _computedBpm = input.estimateBpm();
-      _ecgEngineStatus = res.engineUsed;
-    });
-    if (notify) _emitEvaluation();
+  void _showMsg(String text) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(backgroundColor: NasaColors.deepSpaceBlue, content: Text(text)),
+    );
   }
 
   Future<void> _evaluateModuleA() async {
@@ -168,7 +162,8 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
       active: _active ? 1 : 0,
     );
 
-    final CardioPredictionResult res = await NasaAiService.runCardioModel(input);
+    final CardioPredictionResult res =
+        await NasaAiService.runCardioModel(input);
 
     if (!mounted) return;
     setState(() {
@@ -176,79 +171,100 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
       _cardioRisk = res.risk;
       _cardioEngineStatus = res.engineUsed;
     });
-
-    _emitEvaluation();
-    if (showToast) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          backgroundColor: NasaColors.deepSpaceBlue,
-          content: Text(
-            '${res.engineUsed} -> Risk: ${(res.risk * 100).toStringAsFixed(1)}%',
-          ),
-        ),
-      );
-    }
   }
 
-  Future<void> _evaluateModuleC({bool showToast = true}) async {
-    final PostureModelInput input = PostureModelInput(
-      neckDevDeg: _neckDevDeg,
-      spineCurvDeg: _spineCurvDeg,
-    );
-    final PosturePredictionResult res =
-        await NasaAiService.runPostureModel(input);
+  void _evalB() {
+    final double risk = _ai.runCardio(_cardioInput());
+    setState(() => _cardioRiskOutput = risk);
+  }
 
-    if (!mounted) return;
+  void _loadEcgPreset(String preset) {
+    final List<double> samples = EcgModelInput.generatePreset(preset);
     setState(() {
       _postureRisk = res.risk;
       _postureEngineStatus = res.engineUsed;
     });
+  }
 
-    _emitEvaluation();
-    if (showToast) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          backgroundColor: NasaColors.deepSpaceBlue,
-          content: Text(
-            '${res.engineUsed} -> Posture Risk: ${(res.risk * 100).toStringAsFixed(1)}%',
-          ),
-        ),
-      );
+  void _runModelA() {
+    if (!_aiReady) return _showMsg('Models are still loading...');
+    _evalA();
+    _notifyDashboard();
+    final int top = _ecgOutputProbs
+        .indexOf(_ecgOutputProbs.reduce((x, y) => x > y ? x : y));
+    const List<String> names = <String>['N', 'S', 'V', 'F', 'Q'];
+    _showMsg('Model A: class ${names[top]} '
+        '(${(_ecgOutputProbs[top] * 100).toStringAsFixed(1)}%)');
+  }
+
+  void _runModelB() {
+    if (!_aiReady) return _showMsg('Models are still loading...');
+    _evalB();
+    _notifyDashboard();
+    _showMsg(
+        'Model B: cardiovascular risk ${(_cardioRiskOutput * 100).toStringAsFixed(1)}%');
+  }
+
+  Future<void> _startCamera() async {
+    final List<CameraDescription> cams = await availableCameras();
+    final CameraDescription cam = cams.firstWhere(
+      (CameraDescription c) => c.lensDirection == CameraLensDirection.back,
+      orElse: () => cams.first,
+    );
+    final CameraController ctrl =
+        CameraController(cam, ResolutionPreset.medium, enableAudio: false);
+    await ctrl.initialize();
+    if (!mounted) {
+      await ctrl.dispose();
+      return;
+    }
+    setState(() => _cam = ctrl);
+  }
+
+  Future<void> _runModelC() async {
+    if (!_aiReady) {
+      _showMsg('Models are still loading...');
+      return;
+    }
+    if (_camBusy) return;
+    setState(() => _camBusy = true);
+    try {
+      if (_cam == null) {
+        await _startCamera();
+        _showMsg(
+            'Camera ready. Point it at the person and press the button again.');
+        return;
+      }
+      final XFile file = await _cam!.takePicture();
+      final List<double> tensor =
+          await HealthAiService.imageBytesToTensor(await file.readAsBytes());
+      final double risk = _ai.runPosture(tensor);
+      if (!mounted) return;
+      setState(() {
+        _postureRiskOutput = risk;
+        _postureMeasured = true;
+        _isTensorReady = true;
+      });
+      _notifyDashboard();
+      _showMsg('Model C: posture risk ${(risk * 100).toStringAsFixed(1)}%');
+    } catch (e) {
+      _showMsg('Camera error: $e');
+    } finally {
+      if (mounted) setState(() => _camBusy = false);
     }
   }
 
-  void _emitEvaluation() {
-    int maxIdx = 0;
-    for (int i = 1; i < _ecgProbs.length; i++) {
-      if (_ecgProbs[i] > _ecgProbs[maxIdx]) maxIdx = i;
-    }
-
-    final double anomalyScore = (1.0 - _ecgProbs[0]).clamp(0.0, 1.0);
-    final double heightM = _heightCm / 100.0;
-    final double bmi = _weightKg / (heightM * heightM);
-
-    widget.onModelsEvaluated?.call(
-      AiEvaluationBundle(
-        ecgAnomalyRisk: anomalyScore,
-        heartRateBpm: _computedBpm,
-        dominantEcgClass: EcgModelInput.classDescriptions[maxIdx],
-        cardioRisk: _cardioRisk,
-        systolic: _apHi.round(),
-        diastolic: _apLo.round(),
-        bmi: bmi,
-        postureRisk: _postureRisk,
-        neckDevDeg: _neckDevDeg,
-        spineCurvDeg: _spineCurvDeg,
-        activeEngineLabel: NasaAiService.isLiveKerasConnected
-            ? 'LIVE KERAS SERVER'
-            : 'ON-DEVICE WEIGHTS',
-      ),
-    );
+  void _notifyDashboard() {
+    final double ecgAnomalyRisk = 1.0 - _ecgOutputProbs[0];
+    widget.onModelsEvaluated
+        ?.call(ecgAnomalyRisk, _cardioRiskOutput, _postureRiskOutput);
   }
 
   @override
   void dispose() {
     _tabController.dispose();
+    _ai.dispose();
+    _cam?.dispose();
     _ecgRawController.dispose();
     super.dispose();
   }
@@ -399,8 +415,8 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
             style: const TextStyle(fontSize: 11, fontFamily: 'monospace'),
             decoration: InputDecoration(
               labelText: '187 Float32 Samples (0.0 .. 1.0, comma-separated)',
-              labelStyle:
-                  const TextStyle(color: NasaColors.biometricCyan, fontSize: 12),
+              labelStyle: const TextStyle(
+                  color: NasaColors.biometricCyan, fontSize: 12),
               filled: true,
               fillColor: NasaColors.stationGrey,
               border:
@@ -677,8 +693,8 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
             child: Column(
               children: [
                 SwitchListTile(
-                  title:
-                      const Text('9. smoke (0 or 1)', style: TextStyle(fontSize: 13)),
+                  title: const Text('9. smoke (0 or 1)',
+                      style: TextStyle(fontSize: 13)),
                   value: _smoke,
                   activeThumbColor: NasaColors.orbitRed,
                   onChanged: (bool v) {
@@ -687,8 +703,8 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
                   },
                 ),
                 SwitchListTile(
-                  title:
-                      const Text('10. alco (0 or 1)', style: TextStyle(fontSize: 13)),
+                  title: const Text('10. alco (0 or 1)',
+                      style: TextStyle(fontSize: 13)),
                   value: _alco,
                   activeThumbColor: NasaColors.warningAmber,
                   onChanged: (bool v) {
@@ -777,87 +793,24 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(color: postureColor, width: 2),
               ),
-              child: CustomPaint(
-                painter: _PostureKeypointsPainter(
-                  neckDevDeg: _neckDevDeg,
-                  spineCurvDeg: _spineCurvDeg,
-                  color: postureColor,
-                ),
-              ),
+              child: _postureFrame(postureColor),
             ),
           ),
-          const SizedBox(height: 16),
-          _buildSliderRow(
-            label: 'Neck Deviation Angle (neck_dev: ok=15°, bad=45°)',
-            value: _neckDevDeg,
-            min: 5,
-            max: 55,
-            unit: 'deg',
-            onChanged: (double v) {
-              setState(() => _neckDevDeg = v);
-              _evaluateModuleC(showToast: false);
-            },
-          ),
-          _buildSliderRow(
-            label: 'Spine Curvature Angle (spine_curv: ok=10°, bad=35°)',
-            value: _spineCurvDeg,
-            min: 5,
-            max: 45,
-            unit: 'deg',
-            onChanged: (double v) {
-              setState(() => _spineCurvDeg = v);
-              _evaluateModuleC(showToast: false);
-            },
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'POSTURE KEYPOINT PRESETS (melsmm/posture-keypoints-detection):',
-            style: TextStyle(
-                color: NasaColors.nebulaGrey,
-                fontSize: 11,
-                fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 8),
-          Card(
-            margin: EdgeInsets.zero,
-            color: NasaColors.stationGrey,
-            child: Column(
-              children: [
-                {
-                  'name': 'Nominal Microgravity Neutral Posture',
-                  'neck': 16.0,
-                  'spine': 11.0,
-                },
-                {
-                  'name': 'EVA Suit Lumbar & Neck Forward Strain',
-                  'neck': 29.0,
-                  'spine': 22.0,
-                },
-                {
-                  'name': 'Severe 0G Slouch / Kyphotic Curvature',
-                  'neck': 42.0,
-                  'spine': 33.0,
-                },
-              ].map((Map<String, dynamic> item) {
-                final String name = item['name'] as String;
-                return ListTile(
-                  leading: Icon(
-                    _selectedPosturePreset == name
-                        ? Icons.radio_button_checked
-                        : Icons.radio_button_off,
-                    color: NasaColors.biometricCyan,
-                  ),
-                  title: Text(name, style: const TextStyle(fontSize: 12)),
-                  onTap: () {
-                    setState(() {
-                      _selectedPosturePreset = name;
-                      _neckDevDeg = item['neck'] as double;
-                      _spineCurvDeg = item['spine'] as double;
-                    });
-                    _evaluateModuleC(showToast: true);
-                  },
-                );
-              }).toList(),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: NasaColors.biometricCyan,
+                foregroundColor: NasaColors.darkMatter,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+              ),
+              onPressed: _runModelC,
+              icon: const Icon(Icons.camera_alt_rounded),
+              label: const Text(
+                'CAPTURE & RUN MODEL C ([1, 224, 224, 3])',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
             ),
           ),
           const SizedBox(height: 16),
@@ -876,7 +829,9 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
                   style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                 ),
                 Text(
-                  '${(_postureRisk * 100).toStringAsFixed(1)}%',
+                  _postureMeasured
+                      ? '${(_postureRiskOutput * 100).toStringAsFixed(1)}%'
+                      : '--',
                   style: TextStyle(
                     color: postureColor,
                     fontWeight: FontWeight.bold,
@@ -888,6 +843,60 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
           ),
         ],
       ),
+    );
+  }
+
+  Widget _postureFrame(Color postureColor) {
+    final CameraController? cam = _cam;
+    if (cam != null && cam.value.isInitialized) {
+      final Size? ps = cam.value.previewSize;
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: FittedBox(
+          fit: BoxFit.cover,
+          child: SizedBox(
+            width: ps?.height ?? 224,
+            height: ps?.width ?? 224,
+            child: CameraPreview(cam),
+          ),
+        ),
+      );
+    }
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        Icon(
+          Icons.accessibility_new_rounded,
+          size: 130,
+          color: postureColor.withValues(alpha: 0.75),
+        ),
+        Positioned(
+          top: 8,
+          left: 8,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: NasaColors.darkMatter.withValues(alpha: 0.8),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: const Text(
+              '224x224 RGB • FLOAT32 (0-255)',
+              style: TextStyle(color: NasaColors.biometricCyan, fontSize: 9),
+            ),
+          ),
+        ),
+        Positioned(
+          bottom: 8,
+          child: Text(
+            _isTensorReady ? 'LAST FRAME: 150,528 FLOATS' : 'NO FRAME',
+            style: const TextStyle(
+              color: NasaColors.starlightWhite,
+              fontSize: 10,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -918,8 +927,8 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
           ),
           const SizedBox(height: 4),
           Text('• Input: $inputSpec',
-              style:
-                  const TextStyle(color: NasaColors.biometricCyan, fontSize: 11)),
+              style: const TextStyle(
+                  color: NasaColors.biometricCyan, fontSize: 11)),
           Text('• Output: $outputSpec',
               style: const TextStyle(
                   color: NasaColors.starlightWhite, fontSize: 11)),

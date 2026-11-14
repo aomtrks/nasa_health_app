@@ -1,4 +1,6 @@
 import 'dart:convert';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter/services.dart';
 import 'package:flutter_litert/flutter_litert.dart';
@@ -67,6 +69,25 @@ class HealthAiService {
     final output = <List<double>>[List<double>.filled(1, 0.0)];
     _posture!.run(input, output);
     return output[0][0].clamp(0.0, 1.0).toDouble();
+  }
+
+  /// Decodes a JPEG/PNG photo, resizes it to 224x224 and returns the flat
+  /// RGB float tensor (150,528 values, 0..255) the posture model expects.
+  static Future<List<double>> imageBytesToTensor(Uint8List bytes) async {
+    final codec =
+        await ui.instantiateImageCodec(bytes, targetWidth: 224, targetHeight: 224);
+    final frame = await codec.getNextFrame();
+    final data = await frame.image.toByteData(format: ui.ImageByteFormat.rawRgba);
+    final rgba = data!.buffer.asUint8List();
+    final out = List<double>.filled(224 * 224 * 3, 0.0);
+    for (int i = 0; i < 224 * 224; i++) {
+      out[i * 3] = rgba[i * 4].toDouble();
+      out[i * 3 + 1] = rgba[i * 4 + 1].toDouble();
+      out[i * 3 + 2] = rgba[i * 4 + 2].toDouble();
+    }
+    frame.image.dispose();
+    codec.dispose();
+    return out;
   }
 
   void dispose() {
