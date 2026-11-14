@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:nasa_health_app/core/ml/ai_input_models.dart';
+import 'package:nasa_health_app/core/ml/health_ai_service.dart';
 import 'package:nasa_health_app/core/theme/app_theme.dart';
 
 class AiDiagnosticsScreen extends StatefulWidget {
@@ -14,6 +15,8 @@ class AiDiagnosticsScreen extends StatefulWidget {
 class _AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
     with SingleTickerProviderStateMixin {
   late final TabController _tabController;
+  final HealthAiService _ai = HealthAiService();
+  bool _aiReady = false;
 
   // --- MODEL A (ECG [1, 187, 1]) STATE ---
   String _selectedEcgPreset = 'Normal Sinus Rhythm';
@@ -45,6 +48,76 @@ class _AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
     _loadEcgPreset(_selectedEcgPreset);
+    _initAi();
+  }
+
+  Future<void> _initAi() async {
+    try {
+      await _ai.load();
+      if (!mounted) return;
+      setState(() => _aiReady = true);
+      _evalA();
+      _evalB();
+      _evalC();
+      _notifyDashboard();
+    } catch (e) {
+      if (!mounted) return;
+      _showMsg('Model load error: $e');
+    }
+  }
+
+  void _showMsg(String text) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(backgroundColor: NasaColors.deepSpaceBlue, content: Text(text)),
+    );
+  }
+
+  List<double> _parseEcg() {
+    final List<double> parts = _ecgRawController.text
+        .split(',')
+        .map((String e) => double.tryParse(e.trim()) ?? 0.0)
+        .toList();
+    return List<double>.generate(
+      187,
+      (int i) => i < parts.length ? parts[i].clamp(0.0, 1.0).toDouble() : 0.0,
+    );
+  }
+
+  CardioModelInput _cardioInput() => CardioModelInput(
+        ageYears: _age,
+        gender: _gender,
+        heightCm: _height,
+        weightKg: _weight,
+        systolicBp: _systolic,
+        diastolicBp: _diastolic,
+        cholesterol: _cholesterol,
+        glucose: _glucose,
+        smoke: _smoke ? 1 : 0,
+        alcohol: _alcohol ? 1 : 0,
+        active: _active ? 1 : 0,
+      );
+
+  void _evalA() {
+    final List<double> samples = _parseEcg();
+    final List<double> probs = _ai.runEcg(samples);
+    setState(() {
+      _ecgSamples = samples;
+      _ecgOutputProbs = probs;
+    });
+  }
+
+  void _evalB() {
+    final double risk = _ai.runCardio(_cardioInput());
+    setState(() => _cardioRiskOutput = risk);
+  }
+
+  void _evalC() {
+    final tensor = PostureModelInput.createFloat32ImageTensor(null);
+    final double risk = _ai.runPosture(tensor);
+    setState(() {
+      _isTensorReady = tensor.length == 224 * 224 * 3;
+      _postureRiskOutput = risk;
+    });
   }
 
   void _loadEcgPreset(String preset) {
@@ -57,103 +130,27 @@ class _AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
   }
 
   void _runModelA() {
-    final List<double> parts = _ecgRawController.text
-        .split(',')
-        .map((String e) => double.tryParse(e.trim()) ?? 0.0)
-        .toList();
-
-    final List<double> valid187 = List<double>.generate(
-      187,
-      (int i) => i < parts.length ? parts[i].clamp(0.0, 1.0) : 0.0,
-    );
-
-    final EcgModelInput input = EcgModelInput(valid187);
-    final tensor = input.toFloat32Tensor();
-
-    setState(() {
-      _ecgSamples = valid187;
-      if (_selectedEcgPreset == 'Arrhythmia (PVC)') {
-        _ecgOutputProbs = <double>[0.12, 0.18, 0.58, 0.07, 0.05];
-      } else if (_selectedEcgPreset == 'Space Radiation Stress') {
-        _ecgOutputProbs = <double>[0.30, 0.42, 0.15, 0.08, 0.05];
-      } else {
-        _ecgOutputProbs = <double>[0.89, 0.04, 0.03, 0.02, 0.02];
-      }
-    });
-
+    if (!_aiReady) return _showMsg('Models are still loading...');
+    _evalA();
     _notifyDashboard();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        backgroundColor: NasaColors.deepSpaceBlue,
-        content: Text(
-          'Model A Executed: Float32 [1, ${tensor.length}, 1] -> Output [1, 5]',
-        ),
-      ),
-    );
+    final int top = _ecgOutputProbs.indexOf(_ecgOutputProbs.reduce((x, y) => x > y ? x : y));
+    const List<String> names = <String>['N', 'S', 'V', 'F', 'Q'];
+    _showMsg('Model A: class ${names[top]} '
+        '(${(_ecgOutputProbs[top] * 100).toStringAsFixed(1)}%)');
   }
 
   void _runModelB() {
-    final CardioModelInput input = CardioModelInput(
-      ageYears: _age,
-      gender: _gender,
-      heightCm: _height,
-      weightKg: _weight,
-      systolicBp: _systolic,
-      diastolicBp: _diastolic,
-      cholesterol: _cholesterol,
-      glucose: _glucose,
-      smoke: _smoke ? 1 : 0,
-      alcohol: _alcohol ? 1 : 0,
-      active: _active ? 1 : 0,
-    );
-
-    final tensor = input.toStandardizedFloat32Tensor();
-
-    double risk = 0.15;
-    if (_systolic > 135 || _diastolic > 88) risk += 0.30;
-    if (_cholesterol > 1) risk += 0.15 * (_cholesterol - 1);
-    if (_glucose > 1) risk += 0.12 * (_glucose - 1);
-    if (_smoke) risk += 0.15;
-    if (!_active) risk += 0.12;
-    if (input.bmi > 28) risk += 0.10;
-
-    setState(() {
-      _cardioRiskOutput = risk.clamp(0.02, 0.98);
-    });
-
+    if (!_aiReady) return _showMsg('Models are still loading...');
+    _evalB();
     _notifyDashboard();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        backgroundColor: NasaColors.deepSpaceBlue,
-        content: Text(
-          'Model B Executed: Standardized Float32 [1, ${tensor.length}] -> Risk: ${(_cardioRiskOutput * 100).toStringAsFixed(1)}%',
-        ),
-      ),
-    );
+    _showMsg('Model B: cardiovascular risk ${(_cardioRiskOutput * 100).toStringAsFixed(1)}%');
   }
 
   void _runModelC() {
-    final tensor = PostureModelInput.createFloat32ImageTensor(null);
-    setState(() {
-      _isTensorReady = tensor.length == 224 * 224 * 3;
-      if (_selectedPostureSource.contains('Kyphosis')) {
-        _postureRiskOutput = 0.78;
-      } else if (_selectedPostureSource.contains('EVA Suit')) {
-        _postureRiskOutput = 0.46;
-      } else {
-        _postureRiskOutput = 0.12;
-      }
-    });
-
+    if (!_aiReady) return _showMsg('Models are still loading...');
+    _evalC();
     _notifyDashboard();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        backgroundColor: NasaColors.deepSpaceBlue,
-        content: Text(
-          'Model C Executed: Float32 [1, 224, 224, 3] (${tensor.length} floats) -> Risk: ${(_postureRiskOutput * 100).toStringAsFixed(1)}%',
-        ),
-      ),
-    );
+    _showMsg('Model C: posture risk ${(_postureRiskOutput * 100).toStringAsFixed(1)}%');
   }
 
   void _notifyDashboard() {
@@ -164,6 +161,7 @@ class _AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
   @override
   void dispose() {
     _tabController.dispose();
+    _ai.dispose();
     _ecgRawController.dispose();
     super.dispose();
   }
