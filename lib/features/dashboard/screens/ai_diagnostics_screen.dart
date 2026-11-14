@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:nasa_health_app/core/ml/ai_input_models.dart';
-import 'package:nasa_health_app/core/ml/health_ai_service.dart';
 import 'package:nasa_health_app/core/theme/app_theme.dart';
 
 class AiEvaluationBundle {
@@ -48,8 +47,6 @@ class AiDiagnosticsScreen extends StatefulWidget {
 class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
     with SingleTickerProviderStateMixin {
   late final TabController _tabController;
-  final HealthAiService _ai = HealthAiService();
-  bool _aiReady = false;
 
   // --- MODULE A STATE (LateInitializationError tamamen önlendi: anında başlatılıyor) ---
   int _selectedEcgClassIndex = 0;
@@ -85,111 +82,139 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
-    _loadEcgPreset(_selectedEcgPreset);
-    _initAi();
+    _tabController = TabController(
+      length: 3,
+      vsync: this,
+      initialIndex: widget.initialTabIndex.clamp(0, 2),
+    );
+    _ecgRawController = TextEditingController(text: _ecgSamples.join(', '));
+    _initializeModelsAsync();
   }
 
-  Future<void> _initAi() async {
-    try {
-      await _ai.load();
-      if (!mounted) return;
-      setState(() => _aiReady = true);
-      _evalA();
-      _evalB();
-      _evalC();
-      _notifyDashboard();
-    } catch (e) {
-      if (!mounted) return;
-      _showMsg('Model load error: $e');
+  Future<void> _initializeModelsAsync() async {
+    await _loadMitBihClassSample(0, notify: false);
+    await _evaluateModuleB(showToast: false);
+    await _evaluateModuleC(showToast: false);
+  }
+
+  void switchToTab(int index) {
+    if (mounted) {
+      _tabController.animateTo(index.clamp(0, 2));
     }
   }
 
-  void _showMsg(String text) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(backgroundColor: NasaColors.deepSpaceBlue, content: Text(text)),
-    );
+  Future<void> _loadMitBihClassSample(int classIdx, {bool notify = true}) async {
+    final List<double> beat = EcgModelInput.generateMitBihSample(classIdx);
+    final EcgModelInput input = EcgModelInput(beat);
+    final EcgPredictionResult res = await NasaAiService.runEcgModel(input);
+
+    if (!mounted) return;
+    setState(() {
+      _selectedEcgClassIndex = classIdx;
+      _ecgSamples = beat;
+      _ecgRawController.text = beat.join(', ');
+      _ecgProbs = res.probabilities;
+      _computedBpm = input.estimateBpm();
+      _ecgEngineStatus = res.engineUsed;
+    });
+    if (notify) _emitEvaluation();
   }
 
-  List<double> _parseEcg() {
-    final List<double> parts = _ecgRawController.text
+  Future<void> _evaluateModuleA() async {
+    final List<double> parsed = _ecgRawController.text
         .split(',')
         .map((String s) => double.tryParse(s.trim()) ?? 0.0)
         .toList();
-    return List<double>.generate(
+
+    final List<double> beat187 = List<double>.generate(
       187,
-      (int i) => i < parts.length ? parts[i].clamp(0.0, 1.0).toDouble() : 0.0,
+      (int i) => i < parsed.length ? parsed[i].clamp(0.0, 1.0) : 0.0,
+    );
+
+    final EcgModelInput input = EcgModelInput(beat187);
+    final EcgPredictionResult res = await NasaAiService.runEcgModel(input);
+
+    if (!mounted) return;
+    setState(() {
+      _ecgSamples = beat187;
+      _ecgProbs = res.probabilities;
+      _computedBpm = input.estimateBpm();
+      _ecgEngineStatus = res.engineUsed;
+    });
+
+    _emitEvaluation();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: NasaColors.deepSpaceBlue,
+        content: Text(
+          '${res.engineUsed} -> Anomaly: ${(res.anomalyScore * 100).toStringAsFixed(1)}%',
+        ),
+      ),
     );
   }
 
-  CardioModelInput _cardioInput() => CardioModelInput(
-        ageYears: _age,
-        gender: _gender,
-        heightCm: _height,
-        weightKg: _weight,
-        systolicBp: _systolic,
-        diastolicBp: _diastolic,
-        cholesterol: _cholesterol,
-        glucose: _glucose,
-        smoke: _smoke ? 1 : 0,
-        alcohol: _alcohol ? 1 : 0,
-        active: _active ? 1 : 0,
+  Future<void> _evaluateModuleB({bool showToast = true}) async {
+    final CardioModelInput input = CardioModelInput(
+      ageYears: _ageYears,
+      gender: _gender,
+      heightCm: _heightCm,
+      weightKg: _weightKg,
+      apHi: _apHi,
+      apLo: _apLo,
+      cholesterol: _cholesterol,
+      gluc: _gluc,
+      smoke: _smoke ? 1 : 0,
+      alco: _alco ? 1 : 0,
+      active: _active ? 1 : 0,
+    );
+
+    final CardioPredictionResult res = await NasaAiService.runCardioModel(input);
+
+    if (!mounted) return;
+    setState(() {
+      _standardizedZ = res.standardizedZ;
+      _cardioRisk = res.risk;
+      _cardioEngineStatus = res.engineUsed;
+    });
+
+    _emitEvaluation();
+    if (showToast) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: NasaColors.deepSpaceBlue,
+          content: Text(
+            '${res.engineUsed} -> Risk: ${(res.risk * 100).toStringAsFixed(1)}%',
+          ),
+        ),
       );
+    }
+  }
 
-  void _evalA() {
-    final List<double> samples = _parseEcg();
-    final List<double> probs = _ai.runEcg(samples);
+  Future<void> _evaluateModuleC({bool showToast = true}) async {
+    final PostureModelInput input = PostureModelInput(
+      neckDevDeg: _neckDevDeg,
+      spineCurvDeg: _spineCurvDeg,
+    );
+    final PosturePredictionResult res =
+        await NasaAiService.runPostureModel(input);
+
+    if (!mounted) return;
     setState(() {
-      _ecgSamples = samples;
-      _ecgOutputProbs = probs;
+      _postureRisk = res.risk;
+      _postureEngineStatus = res.engineUsed;
     });
-  }
 
-  void _evalB() {
-    final double risk = _ai.runCardio(_cardioInput());
-    setState(() => _cardioRiskOutput = risk);
-  }
-
-  void _evalC() {
-    final tensor = PostureModelInput.createFloat32ImageTensor(null);
-    final double risk = _ai.runPosture(tensor);
-    setState(() {
-      _isTensorReady = tensor.length == 224 * 224 * 3;
-      _postureRiskOutput = risk;
-    });
-  }
-
-  void _loadEcgPreset(String preset) {
-    final List<double> samples = EcgModelInput.generatePreset(preset);
-    setState(() {
-      _selectedEcgPreset = preset;
-      _ecgSamples = samples;
-      _ecgRawController.text = samples.join(', ');
-    });
-  }
-
-  void _runModelA() {
-    if (!_aiReady) return _showMsg('Models are still loading...');
-    _evalA();
-    _notifyDashboard();
-    final int top = _ecgOutputProbs.indexOf(_ecgOutputProbs.reduce((x, y) => x > y ? x : y));
-    const List<String> names = <String>['N', 'S', 'V', 'F', 'Q'];
-    _showMsg('Model A: class ${names[top]} '
-        '(${(_ecgOutputProbs[top] * 100).toStringAsFixed(1)}%)');
-  }
-
-  void _runModelB() {
-    if (!_aiReady) return _showMsg('Models are still loading...');
-    _evalB();
-    _notifyDashboard();
-    _showMsg('Model B: cardiovascular risk ${(_cardioRiskOutput * 100).toStringAsFixed(1)}%');
-  }
-
-  void _runModelC() {
-    if (!_aiReady) return _showMsg('Models are still loading...');
-    _evalC();
-    _notifyDashboard();
-    _showMsg('Model C: posture risk ${(_postureRiskOutput * 100).toStringAsFixed(1)}%');
+    _emitEvaluation();
+    if (showToast) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: NasaColors.deepSpaceBlue,
+          content: Text(
+            '${res.engineUsed} -> Posture Risk: ${(res.risk * 100).toStringAsFixed(1)}%',
+          ),
+        ),
+      );
+    }
   }
 
   void _emitEvaluation() {
@@ -224,7 +249,6 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
   @override
   void dispose() {
     _tabController.dispose();
-    _ai.dispose();
     _ecgRawController.dispose();
     super.dispose();
   }
