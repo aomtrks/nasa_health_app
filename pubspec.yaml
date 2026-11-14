@@ -35,16 +35,20 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
   perfectum_3d: ^1.0.0 # Pub.dev'den çekilecek kendi 3D kütüphanen
-  #tflite_flutter: ^0.11.0 # Python'da eğitilen AI modelini cihazda çalıştırmak için
-  google_mlkit_face_detection: ^0.12.0
-  camera: ^0.10.6
+  flutter_litert: ^2.8.2 # tflite_flutter replacement (same API, fixes Android JVM target error)
+  google_mlkit_face_detection: ^0.11.0
+  camera: ^0.11.0
   fl_chart: ^0.68.0 # Sağlık metriklerinin zaman serisi grafikleri için
   dio: ^5.4.0 # Go backend ile hızlı HTTP iletişimi için
 
 flutter:
   assets:
-    - assets/
-    - assets/models/
+    - assets/models/cardiovascular.tflite
+    - assets/models/ecg_heartbeat.tflite
+    - assets/models/posture_keypoints.tflite
+    - assets/models/cardiovascular_scaler.json
+    - assets/models/ecg_heartbeat_meta.json
+    - assets/models/posture_keypoints_meta.json
   uses-material-design: true
 dev_dependencies:
   flutter_test:
