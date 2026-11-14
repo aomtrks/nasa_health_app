@@ -1,4 +1,4 @@
-// astronaut_health_monitor/lib/services/face_emotion_service.dart
+/* // astronaut_health_monitor/lib/services/face_emotion_service.dart
 //
 // pubspec.yaml:
 //   dependencies:
@@ -90,3 +90,4 @@ class FaceEmotionService {
 
   Future<void> dispose() => _detector.close();
 }
+ */

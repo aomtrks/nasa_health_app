@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../../../core/theme/app_theme.dart';
+import 'package:nasa_health_app/core/theme/app_theme.dart';
 
 class NasaDrawer extends StatelessWidget {
   final int selectedIndex;
@@ -17,7 +17,6 @@ class NasaDrawer extends StatelessWidget {
       backgroundColor: NasaColors.darkMatter,
       child: Column(
         children: [
-          // Astronot Görev Başlığı
           Container(
             width: double.infinity,
             padding: const EdgeInsets.only(top: 52, bottom: 20, left: 20, right: 20),
@@ -72,7 +71,7 @@ class NasaDrawer extends StatelessWidget {
                               border: Border.all(color: NasaColors.capsuleGreen, width: 0.8),
                             ),
                             child: const Text(
-                              'STATUS: NOMINAL',
+                              'KERAS AI: CONNECTED',
                               style: TextStyle(
                                 color: NasaColors.capsuleGreen,
                                 fontSize: 10,
@@ -91,44 +90,37 @@ class NasaDrawer extends StatelessWidget {
                   children: [
                     _MissionBadge(label: 'MISSION', value: 'ARTEMIS IV'),
                     _MissionBadge(label: 'SOL DAY', value: 'SOL 142'),
-                    _MissionBadge(label: 'AI MODELS', value: '3 ACTIVE'),
+                    _MissionBadge(label: 'MODELS', value: 'A / B / C + MLKIT'),
                   ],
                 ),
               ],
             ),
           ),
-
-          // Navigasyon Menüsü (ListTile Splash Hatası Tamamen Giderildi)
           Expanded(
-            child: Material(
-              color: Colors.transparent,
-              child: ListView(
-                padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
-                children: [
-                  _buildNavItem(
-                    index: 0,
-                    icon: Icons.accessibility_new_rounded,
-                    title: '3D Biometric Twin',
-                    subtitle: 'Overview & Body Status',
-                  ),
-                  _buildNavItem(
-                    index: 1,
-                    icon: Icons.memory_rounded,
-                    title: 'AI Diagnostic Lab (A/B/C)',
-                    subtitle: 'ECG [187], Cardio [12], Posture [224²]',
-                  ),
-                  _buildNavItem(
-                    index: 2,
-                    icon: Icons.task_alt_rounded,
-                    title: 'Countermeasures & Guide',
-                    subtitle: 'Daily Protocols & Space Hazards',
-                  ),
-                ],
-              ),
+            child: ListView(
+              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
+              children: [
+                _buildNavItem(
+                  index: 0,
+                  icon: Icons.accessibility_new_rounded,
+                  title: '3D Biometric Twin',
+                  subtitle: 'Interactive Body & Live Telemetry',
+                ),
+                _buildNavItem(
+                  index: 1,
+                  icon: Icons.memory_rounded,
+                  title: 'AI Diagnostic Lab (.keras)',
+                  subtitle: 'ECG [187], Cardio [12], Posture [224²]',
+                ),
+                _buildNavItem(
+                  index: 2,
+                  icon: Icons.task_alt_rounded,
+                  title: 'Countermeasures & Guide',
+                  subtitle: 'Daily Protocols & Space Hazards',
+                ),
+              ],
             ),
           ),
-
-          // Alt Bilgi & Acil Durum Butonu
           Padding(
             padding: const EdgeInsets.all(16.0),
             child: Column(
@@ -162,7 +154,7 @@ class NasaDrawer extends StatelessWidget {
                 ),
                 const SizedBox(height: 8),
                 const Text(
-                  'FLOAT32 ENGINE • OFFLINE CAPABLE',
+                  'KERAS 3.16 FLOAT32 • OFFLINE CAPABLE',
                   style: TextStyle(color: NasaColors.nebulaGrey, fontSize: 10, letterSpacing: 0.6),
                 ),
               ],
@@ -182,10 +174,10 @@ class NasaDrawer extends StatelessWidget {
     final bool isSelected = selectedIndex == index;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
-      child: ListTile(
-        selected: isSelected,
-        tileColor: Colors.transparent,
-        selectedTileColor: NasaColors.deepSpaceBlue.withValues(alpha: 0.35),
+      child: Material(
+        color: isSelected
+            ? NasaColors.deepSpaceBlue.withValues(alpha: 0.35)
+            : Colors.transparent,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12),
           side: BorderSide(
@@ -195,23 +187,26 @@ class NasaDrawer extends StatelessWidget {
             width: 1,
           ),
         ),
-        leading: Icon(
-          icon,
-          color: isSelected ? NasaColors.biometricCyan : NasaColors.nebulaGrey,
-        ),
-        title: Text(
-          title,
-          style: TextStyle(
-            color: isSelected ? NasaColors.pureWhite : NasaColors.starlightWhite,
-            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-            fontSize: 14,
+        clipBehavior: Clip.antiAlias,
+        child: ListTile(
+          leading: Icon(
+            icon,
+            color: isSelected ? NasaColors.biometricCyan : NasaColors.nebulaGrey,
           ),
+          title: Text(
+            title,
+            style: TextStyle(
+              color: isSelected ? NasaColors.pureWhite : NasaColors.starlightWhite,
+              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+              fontSize: 14,
+            ),
+          ),
+          subtitle: Text(
+            subtitle,
+            style: const TextStyle(color: NasaColors.nebulaGrey, fontSize: 11),
+          ),
+          onTap: () => onItemSelected(index),
         ),
-        subtitle: Text(
-          subtitle,
-          style: const TextStyle(color: NasaColors.nebulaGrey, fontSize: 11),
-        ),
-        onTap: () => onItemSelected(index),
       ),
     );
   }
@@ -237,7 +232,7 @@ class _MissionBadge extends StatelessWidget {
           value,
           style: const TextStyle(
             color: NasaColors.biometricCyan,
-            fontSize: 12,
+            fontSize: 11,
             fontWeight: FontWeight.bold,
           ),
         ),
