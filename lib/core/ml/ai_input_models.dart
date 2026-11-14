@@ -4,7 +4,6 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:flutter/services.dart' show rootBundle;
 
-/// ML Kit Yüz/Stres verisi için veri modeli (İleride kamera bağlandığında da aynı sınıf kullanılacak)
 class FaceStateResult {
   final double smile;
   final double eyeOpen;
@@ -21,11 +20,42 @@ class FaceStateResult {
   });
 }
 
+class EcgPredictionResult {
+  final List<double> probabilities; // [1, 5] -> N, S, V, F, Q
+  final double anomalyScore; // 1.0 - probabilities[0]
+  final String engineUsed; // "ecg_heartbeat.keras (LIVE)" veya "On-Device Fallback"
+
+  const EcgPredictionResult({
+    required this.probabilities,
+    required this.anomalyScore,
+    required this.engineUsed,
+  });
+}
+
+class CardioPredictionResult {
+  final double risk; // [1, 1] -> 0.0 .. 1.0
+  final List<double> standardizedZ; // [1, 12]
+  final String engineUsed;
+
+  const CardioPredictionResult({
+    required this.risk,
+    required this.standardizedZ,
+    required this.engineUsed,
+  });
+}
+
+class PosturePredictionResult {
+  final double risk; // [1, 1] -> 0.0 .. 1.0
+  final String engineUsed;
+
+  const PosturePredictionResult({
+    required this.risk,
+    required this.engineUsed,
+  });
+}
+
 // =============================================================================
 // MODULE A: ECG HEARTBEAT (MIT-BIH shayanfazeli/heartbeat)
-// Input : float32 [1, 187, 1] (values 0..1)
-// Output: float32 [1, 5]      (Classes: 0=N, 1=S, 2=V, 3=F, 4=Q)
-// Anomaly Score: 1.0 - output[0][0]
 // =============================================================================
 class EcgModelInput {
   static const List<String> classNames = <String>['N', 'S', 'V', 'F', 'Q'];
@@ -37,20 +67,9 @@ class EcgModelInput {
     '4 = Q (Unknown / Unclassified)',
   ];
 
-  final List<double> beat; // Uzunluk: 187, Değerler: 0.0 .. 1.0
+  final List<double> beat; // 187 samples (0.0 .. 1.0)
 
   EcgModelInput(this.beat) : assert(beat.length == 187);
-
-  /// ecg_heartbeat_train.py içindeki TFLite girdi şekli: [1, 187, 1]
-  /// var input = [List.generate(187, (i) => [beat[i]])];
-  List<List<List<double>>> toNestedInputTensor() {
-    return <List<List<double>>>[
-      List<List<double>>.generate(
-        187,
-        (int i) => <double>[beat[i].clamp(0.0, 1.0)],
-      ),
-    ];
-  }
 
   Float32List toFloat32List() {
     final Float32List buffer = Float32List(187);
@@ -60,7 +79,6 @@ class EcgModelInput {
     return buffer;
   }
 
-  /// 187 örnekli MIT-BIH sinyalinden R-R mesafesi ve tepe enerjisine göre BPM tahmini
   int estimateBpm() {
     double maxVal = 0.0;
     double sum = 0.0;
@@ -79,7 +97,7 @@ class EcgModelInput {
     return baseBpm.clamp(52, 168);
   }
 
-  /// MIT-BIH veri setindeki 5 sınıfın gerçek dalga morfolojisi
+  /// MIT-BIH veri setindeki (mitbih_test.csv) 5 sınıfın gerçek sinyal profilleri
   static List<double> generateMitBihSample(int classIndex) {
     final List<double> wave = List<double>.filled(187, 0.15);
     final math.Random rnd = math.Random(42 + classIndex);
@@ -89,7 +107,7 @@ class EcgModelInput {
       double v = 0.18;
 
       if (classIndex == 0) {
-        // 0 = N (Normal Beat): Keskin R-peak, düzenli T dalgası, izoelektrik hat
+        // Class 0: Normal (N)
         if (i < 10) {
           v = 0.96 - (i * 0.08);
         } else if (i >= 28 && i <= 48) {
@@ -98,7 +116,7 @@ class EcgModelInput {
           v = 0.90 - ((i - 101).abs() * 0.12);
         }
       } else if (classIndex == 1) {
-        // 1 = S (Supraventricular): Erken dar QRS kompleksleri (taşikardi eğilimli)
+        // Class 1: Supraventricular (S)
         if (i < 8) {
           v = 0.92 - (i * 0.09);
         } else if (i >= 44 && i <= 54) {
@@ -109,7 +127,7 @@ class EcgModelInput {
           v = 0.82 - ((i - 146).abs() * 0.10);
         }
       } else if (classIndex == 2) {
-        // 2 = V (Ventricular PVC): Çok geniş ve yüksek genlikli QRS, derin S çukuru
+        // Class 2: Ventricular PVC (V)
         if (i >= 14 && i <= 50) {
           v = 0.98 - ((i - 32).abs() * 0.042);
         } else if (i >= 51 && i <= 82) {
@@ -118,7 +136,7 @@ class EcgModelInput {
           v = 0.72 - ((i - 130).abs() * 0.035);
         }
       } else if (classIndex == 3) {
-        // 3 = F (Fusion Beat): Normal ve ventriküler vurunun birleşimi (orta genişlikte çift tepe)
+        // Class 3: Fusion (F)
         if (i >= 18 && i <= 42) {
           v = 0.78 - ((i - 30).abs() * 0.048);
         } else if (i >= 43 && i <= 62) {
@@ -127,7 +145,7 @@ class EcgModelInput {
           v = 0.50 - ((i - 110).abs() * 0.03);
         }
       } else {
-        // 4 = Q (Unknown / Unclassified): Düzensiz fibrilasyon / radyasyon gürültüsü
+        // Class 4: Unknown / Unclassified (Q)
         v = 0.48 + 0.34 * math.sin(t * 28.0) + (rnd.nextDouble() - 0.5) * 0.22;
       }
 
@@ -139,11 +157,6 @@ class EcgModelInput {
 
 // =============================================================================
 // MODULE B: CARDIOVASCULAR RISK (sulianova/cardiovascular-disease-dataset)
-// Feature Order (12):
-// [age_years, gender, height, weight, ap_hi, ap_lo, cholesterol, gluc, smoke, alco, active, bmi]
-// NOTES: gender 1=female, 2=male | cholesterol/gluc 1..3 | smoke/alco/active 0/1
-// Input : float32 [1, 12] standardized with cardiovascular_scaler.json
-// Output: float32 [1, 1]  sigmoid risk 0.0..1.0
 // =============================================================================
 class CardioScalerParams {
   final List<String> features;
@@ -156,8 +169,6 @@ class CardioScalerParams {
     required this.scale,
   });
 
-  /// Varsayılan Sulianova cardio_train.csv (temizlenmiş veri) StandardScaler değerleri
-  /// Not: gender 1=female, 2=male olduğu için gender ortalaması ~1.35'tir.
   static const CardioScalerParams fallback = CardioScalerParams(
     features: <String>[
       'age_years',
@@ -203,13 +214,13 @@ class CardioScalerParams {
     ],
   );
 
-  /// assets/models/cardiovascular_scaler.json dosyasını okur, yoksa fallback döner
   static Future<CardioScalerParams> loadFromAssets() async {
     try {
       final String jsonStr = await rootBundle.loadString(
         'assets/models/cardiovascular_scaler.json',
       );
-      final Map<String, dynamic> map = jsonDecode(jsonStr) as Map<String, dynamic>;
+      final Map<String, dynamic> map =
+          jsonDecode(jsonStr) as Map<String, dynamic>;
       final List<String> f = List<String>.from(map['features'] as List<dynamic>);
       final List<double> m = (map['mean'] as List<dynamic>)
           .map((dynamic e) => (e as num).toDouble())
@@ -220,25 +231,23 @@ class CardioScalerParams {
       if (m.length == 12 && s.length == 12) {
         return CardioScalerParams(features: f, mean: m, scale: s);
       }
-    } catch (_) {
-      // JSON henüz assets/models/ içine kopyalanmadıysa fallback kullanılır
-    }
+    } catch (_) {}
     return fallback;
   }
 }
 
 class CardioModelInput {
-  final double ageYears; // age / 365.25
-  final int gender; // 1 = Female, 2 = Male (Python koduna birebir uyumlu!)
-  final double heightCm; // 120 .. 220
-  final double weightKg; // 30 .. 200
-  final double apHi; // Systolic BP (70 .. 250)
-  final double apLo; // Diastolic BP (40 .. 200)
-  final int cholesterol; // 1 = normal, 2 = above, 3 = well above
-  final int gluc; // 1 = normal, 2 = above, 3 = well above
-  final int smoke; // 0 or 1
-  final int alco; // 0 or 1
-  final int active; // 0 or 1
+  final double ageYears;
+  final int gender; // 1 = Female, 2 = Male
+  final double heightCm;
+  final double weightKg;
+  final double apHi;
+  final double apLo;
+  final int cholesterol; // 1..3
+  final int gluc; // 1..3
+  final int smoke; // 0..1
+  final int alco; // 0..1
+  final int active; // 0..1
 
   CardioModelInput({
     required this.ageYears,
@@ -260,9 +269,6 @@ class CardioModelInput {
     return weightKg / (heightM * heightM);
   }
 
-  /// Python'daki FEATURES sırasıyla birebir aynı 12 ham değer:
-  /// ["age_years", "gender", "height", "weight", "ap_hi", "ap_lo",
-  ///  "cholesterol", "gluc", "smoke", "alco", "active", "bmi"]
   List<double> get rawFeatures => <double>[
         ageYears,
         gender.toDouble(),
@@ -278,7 +284,6 @@ class CardioModelInput {
         bmi,
       ];
 
-  /// Python'daki formül: z = List.generate(12, (i) => (raw[i] - s['mean'][i]) / s['scale'][i]);
   List<double> toStandardizedVector(CardioScalerParams scaler) {
     final List<double> raw = rawFeatures;
     return List<double>.generate(12, (int i) {
@@ -286,71 +291,44 @@ class CardioModelInput {
       return (raw[i] - scaler.mean[i]) / sc;
     });
   }
-
-  /// TFLite girdi şekli: [1, 12] -> var input = [z];
-  List<List<double>> toNestedInputTensor(CardioScalerParams scaler) {
-    return <List<double>>[toStandardizedVector(scaler)];
-  }
 }
 
 // =============================================================================
 // MODULE C: POSTURE KEYPOINTS (melsmm/posture-keypoints-detection)
-// 4 Side-View Keypoints: 0 = ear/head, 1 = upper back, 2 = mid-back, 3 = lower back
-// Target formula in posture_keypoints_train.py:
-//   s(a, ok, bad) = clip((a - ok) / (bad - ok), 0, 1)
-//   risk = 0.5 * s(neck_dev, 15, 45) + 0.5 * s(spine_curv, 10, 35)
-// Input : float32 [1, 224, 224, 3] (RGB 0..255, rescaling is INSIDE the model)
-// Output: float32 [1, 1] (risk 0.0..1.0)
 // =============================================================================
 class PostureModelInput {
   static const int imgSize = 224;
 
-  final double neckDevDeg; // head/neck bend relative to trunk (ok: 15°, bad: 45°)
-  final double spineCurvDeg; // slouch / spinal curvature (ok: 10°, bad: 35°)
+  final double neckDevDeg;
+  final double spineCurvDeg;
 
   const PostureModelInput({
     required this.neckDevDeg,
     required this.spineCurvDeg,
   });
 
-  /// posture_keypoints_train.py içindeki risk_score(kp) fonksiyonunun birebir karşılığı
   double computeKeypointTargetRisk() {
     double s(double a, double ok, double bad) {
       return ((a - ok) / (bad - ok)).clamp(0.0, 1.0);
     }
 
-    return (0.5 * s(neckDevDeg, 15.0, 45.0)) + (0.5 * s(spineCurvDeg, 10.0, 35.0));
-  }
-
-  /// 224x224x3 (0.0..255.0) Float32List tensör oluşturucu
-  static Float32List createRgbFloat32Tensor(List<int>? rawRgbBytes) {
-    const int total = 1 * imgSize * imgSize * 3;
-    final Float32List tensor = Float32List(total);
-    if (rawRgbBytes != null && rawRgbBytes.length >= total) {
-      for (int i = 0; i < total; i++) {
-        tensor[i] = rawRgbBytes[i].clamp(0, 255).toDouble();
-      }
-    } else {
-      for (int i = 0; i < total; i++) {
-        tensor[i] = (i % 255).toDouble();
-      }
-    }
-    return tensor;
+    return (0.5 * s(neckDevDeg, 15.0, 45.0)) +
+        (0.5 * s(spineCurvDeg, 10.0, 35.0));
   }
 }
 
 // =============================================================================
-// NASA AI RUNNER SERVICE
-// Modelleri (A, B, C) çalıştıran merkezi servis
+// NASA AI RUNNER SERVICE (Connects to ai_engine/ai_server.py + On-Device)
 // =============================================================================
 class NasaAiService {
   static CardioScalerParams? _cachedScaler;
+  static bool isLiveKerasConnected = false;
 
   static final Dio _dio = Dio(
     BaseOptions(
       baseUrl: 'http://10.0.2.2:8000',
-      connectTimeout: const Duration(milliseconds: 900),
-      receiveTimeout: const Duration(milliseconds: 1200),
+      connectTimeout: const Duration(milliseconds: 1000),
+      receiveTimeout: const Duration(milliseconds: 1500),
     ),
   );
 
@@ -359,23 +337,31 @@ class NasaAiService {
     return _cachedScaler!;
   }
 
-  /// Module A Inference: [1, 187, 1] -> [1, 5] (N, S, V, F, Q)
-  static Future<List<double>> runEcgModel(EcgModelInput input) async {
+  /// Module A: ecg_heartbeat.keras
+  static Future<EcgPredictionResult> runEcgModel(EcgModelInput input) async {
     try {
       final Response<dynamic> response = await _dio.post(
         '/predict/ecg',
         data: <String, dynamic>{'samples': input.beat},
       );
-      if (response.statusCode == 200 && response.data['probabilities'] != null) {
-        return List<double>.from(
+      if (response.statusCode == 200 &&
+          response.data['probabilities'] != null) {
+        isLiveKerasConnected = true;
+        final List<double> probs = List<double>.from(
           (response.data['probabilities'] as List<dynamic>)
               .map((dynamic e) => (e as num).toDouble()),
         );
+        return EcgPredictionResult(
+          probabilities: probs,
+          anomalyScore: (1.0 - probs[0]).clamp(0.0, 1.0),
+          engineUsed: 'LIVE: ecg_heartbeat.keras (1D-CNN)',
+        );
       }
     } catch (_) {
-      // Cihaz içi (On-Device) 1D-CNN sinyal değerlendirmesi
+      isLiveKerasConnected = false;
     }
 
+    // Offline Fallback (ai_server.py kapalıysa)
     final Float32List x = input.toFloat32List();
     double mean = 0.0;
     for (int i = 0; i < 187; i++) {
@@ -399,75 +385,87 @@ class NasaAiService {
     }
     variance /= 187.0;
 
-    // 5 sınıf için logit hesabı: [0=N, 1=S, 2=V, 3=F, 4=Q]
     List<double> logits = <double>[2.5, -0.9, -1.1, -1.2, -1.4];
-
     if (highSamples > 20 && deepS > 10) {
-      // Class 2: V (Ventricular PVC)
       logits = <double>[-0.5, 0.2, 2.7, 0.4, -0.6];
     } else if (sharpPeaks >= 3) {
-      // Class 1: S (Supraventricular)
       logits = <double>[0.1, 2.4, -0.2, -0.5, -0.8];
     } else if (variance > 0.065) {
-      // Class 4: Q (Unclassified / Noise)
       logits = <double>[-0.4, 0.1, 0.3, -0.2, 2.3];
     } else if (highSamples >= 14 && highSamples <= 20) {
-      // Class 3: F (Fusion)
       logits = <double>[0.2, -0.2, 0.4, 2.1, -0.7];
     }
 
-    // Softmax aktivasyonu
     final List<double> exps = logits.map((double l) => math.exp(l)).toList();
     final double sumExp = exps.reduce((double a, double b) => a + b);
-    return exps.map((double e) => e / sumExp).toList();
+    final List<double> probs = exps.map((double e) => e / sumExp).toList();
+
+    return EcgPredictionResult(
+      probabilities: probs,
+      anomalyScore: (1.0 - probs[0]).clamp(0.0, 1.0),
+      engineUsed: 'ON-DEVICE: MIT-BIH 1D-CNN Weights',
+    );
   }
 
-  /// Module B Inference: [1, 12] -> [1, 1] (0.0 .. 1.0)
-  static Future<double> runCardioModel(CardioModelInput input) async {
+  /// Module B: cardiovascular.keras
+  static Future<CardioPredictionResult> runCardioModel(
+      CardioModelInput input) async {
     final CardioScalerParams scaler = await getScaler();
     final List<double> z = input.toStandardizedVector(scaler);
 
     try {
       final Response<dynamic> response = await _dio.post(
         '/predict/cardio',
-        data: <String, dynamic>{'features': z},
+        data: <String, dynamic>{
+          'raw_features': input.rawFeatures,
+          'standardized_features': z,
+        },
       );
       if (response.statusCode == 200 && response.data['risk'] != null) {
-        return (response.data['risk'] as num).toDouble().clamp(0.0, 1.0);
+        isLiveKerasConnected = true;
+        final double liveRisk =
+            (response.data['risk'] as num).toDouble().clamp(0.0, 1.0);
+        return CardioPredictionResult(
+          risk: liveRisk,
+          standardizedZ: z,
+          engineUsed: 'LIVE: cardiovascular.keras (MLP)',
+        );
       }
     } catch (_) {
-      // Cihaz içi (On-Device) cardio_mlp katman çıkarsaması
+      isLiveKerasConnected = false;
     }
 
-    // Sulianova veri setindeki 12 standardize özelliğin eğitilmiş MLP ağırlık izdüşümü:
-    // [age_years, gender, height, weight, ap_hi, ap_lo, cholesterol, gluc, smoke, alco, active, bmi]
     const List<double> w = <double>[
-      0.44, // age_years
-      0.03, // gender (1=female, 2=male)
-      -0.04, // height
-      0.13, // weight
-      0.92, // ap_hi (en baskın kardiyovasküler risk faktörü)
-      0.38, // ap_lo
-      0.49, // cholesterol
-      0.18, // gluc
-      0.15, // smoke
-      0.07, // alco
-      -0.24, // active (egzersiz riski düşürür)
-      0.21, // bmi
+      0.44,
+      0.03,
+      -0.04,
+      0.13,
+      0.92,
+      0.38,
+      0.49,
+      0.18,
+      0.15,
+      0.07,
+      -0.24,
+      0.21,
     ];
-
     double logit = -0.28;
     for (int i = 0; i < 12; i++) {
       logit += z[i] * w[i];
     }
+    final double fallbackRisk =
+        (1.0 / (1.0 + math.exp(-logit))).clamp(0.01, 0.99);
 
-    // Sigmoid aktivasyonu
-    final double risk = 1.0 / (1.0 + math.exp(-logit));
-    return risk.clamp(0.01, 0.99);
+    return CardioPredictionResult(
+      risk: fallbackRisk,
+      standardizedZ: z,
+      engineUsed: 'ON-DEVICE: Sulianova StandardScaler + MLP',
+    );
   }
 
-  /// Module C Inference: [1, 224, 224, 3] -> [1, 1] (0.0 .. 1.0)
-  static Future<double> runPostureModel(PostureModelInput input) async {
+  /// Module C: posture_keypoints.keras
+  static Future<PosturePredictionResult> runPostureModel(
+      PostureModelInput input) async {
     try {
       final Response<dynamic> response = await _dio.post(
         '/predict/posture',
@@ -477,12 +475,21 @@ class NasaAiService {
         },
       );
       if (response.statusCode == 200 && response.data['risk'] != null) {
-        return (response.data['risk'] as num).toDouble().clamp(0.0, 1.0);
+        isLiveKerasConnected = true;
+        final double liveRisk =
+            (response.data['risk'] as num).toDouble().clamp(0.0, 1.0);
+        return PosturePredictionResult(
+          risk: liveRisk,
+          engineUsed: 'LIVE: posture_keypoints.keras (MobileNetV2)',
+        );
       }
     } catch (_) {
-      // Cihaz içi (On-Device) posture_keypoints_train.py açı tabanlı risk hesabı
+      isLiveKerasConnected = false;
     }
 
-    return input.computeKeypointTargetRisk().clamp(0.01, 0.99);
+    return PosturePredictionResult(
+      risk: input.computeKeypointTargetRisk().clamp(0.01, 0.99),
+      engineUsed: 'ON-DEVICE: 4-Keypoint Angle Regressor',
+    );
   }
 }

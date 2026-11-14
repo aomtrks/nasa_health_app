@@ -3,16 +3,17 @@ import 'package:nasa_health_app/core/ml/ai_input_models.dart';
 import 'package:nasa_health_app/core/theme/app_theme.dart';
 
 class AiEvaluationBundle {
-  final double ecgAnomalyRisk; // 1.0 - output[0]
+  final double ecgAnomalyRisk;
   final int heartRateBpm;
-  final String dominantEcgClass; // N, S, V, F, Q
-  final double cardioRisk; // output[0][0]
-  final int systolic; // ap_hi
-  final int diastolic; // ap_lo
+  final String dominantEcgClass;
+  final double cardioRisk;
+  final int systolic;
+  final int diastolic;
   final double bmi;
-  final double postureRisk; // output[0][0]
+  final double postureRisk;
   final double neckDevDeg;
   final double spineCurvDeg;
+  final String activeEngineLabel;
 
   const AiEvaluationBundle({
     required this.ecgAnomalyRisk,
@@ -25,6 +26,7 @@ class AiEvaluationBundle {
     required this.postureRisk,
     required this.neckDevDeg,
     required this.spineCurvDeg,
+    required this.activeEngineLabel,
   });
 }
 
@@ -46,35 +48,36 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
     with SingleTickerProviderStateMixin {
   late final TabController _tabController;
 
-  // --- MODULE A (ecg_heartbeat.tflite) STATE ---
+  // --- MODULE A STATE (LateInitializationError tamamen önlendi: anında başlatılıyor) ---
   int _selectedEcgClassIndex = 0;
-  late List<double> _ecgSamples;
-  final TextEditingController _ecgRawController = TextEditingController();
+  List<double> _ecgSamples = EcgModelInput.generateMitBihSample(0);
+  late final TextEditingController _ecgRawController;
   List<double> _ecgProbs = <double>[0.91, 0.03, 0.03, 0.02, 0.01];
   int _computedBpm = 72;
+  String _ecgEngineStatus = 'READY: ecg_heartbeat.keras';
 
-  // --- MODULE B (cardiovascular.tflite) STATE ---
-  // Feature order: [age_years, gender, height, weight, ap_hi, ap_lo, cholesterol, gluc, smoke, alco, active, bmi]
+  // --- MODULE B STATE ---
   double _ageYears = 38.0;
-  int _gender = 2; // 1 = Female, 2 = Male (cardiovascular_train.py standardı!)
+  int _gender = 2; // 1 = Female, 2 = Male
   double _heightCm = 176.0;
   double _weightKg = 75.0;
   double _apHi = 120.0;
   double _apLo = 80.0;
-  int _cholesterol = 1; // 1=normal, 2=above, 3=well above
-  int _gluc = 1; // 1=normal, 2=above, 3=well above
+  int _cholesterol = 1;
+  int _gluc = 1;
   bool _smoke = false;
   bool _alco = false;
   bool _active = true;
   double _cardioRisk = 0.17;
   List<double> _standardizedZ = List<double>.filled(12, 0.0);
+  String _cardioEngineStatus = 'READY: cardiovascular.keras';
 
-  // --- MODULE C (posture_keypoints.tflite) STATE ---
-  // Keypoints: 0=ear/head, 1=upper back, 2=mid-back, 3=lower back
+  // --- MODULE C STATE ---
   String _selectedPosturePreset = 'Nominal Microgravity Neutral Posture';
-  double _neckDevDeg = 18.0; // ok=15, bad=45
-  double _spineCurvDeg = 12.0; // ok=10, bad=35
+  double _neckDevDeg = 18.0;
+  double _spineCurvDeg = 12.0;
   double _postureRisk = 0.09;
+  String _postureEngineStatus = 'READY: posture_keypoints.keras';
 
   @override
   void initState() {
@@ -84,10 +87,11 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
       vsync: this,
       initialIndex: widget.initialTabIndex.clamp(0, 2),
     );
-    _initializeModels();
+    _ecgRawController = TextEditingController(text: _ecgSamples.join(', '));
+    _initializeModelsAsync();
   }
 
-  Future<void> _initializeModels() async {
+  Future<void> _initializeModelsAsync() async {
     await _loadMitBihClassSample(0, notify: false);
     await _evaluateModuleB(showToast: false);
     await _evaluateModuleC(showToast: false);
@@ -102,15 +106,16 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
   Future<void> _loadMitBihClassSample(int classIdx, {bool notify = true}) async {
     final List<double> beat = EcgModelInput.generateMitBihSample(classIdx);
     final EcgModelInput input = EcgModelInput(beat);
-    final List<double> probs = await NasaAiService.runEcgModel(input);
+    final EcgPredictionResult res = await NasaAiService.runEcgModel(input);
 
     if (!mounted) return;
     setState(() {
       _selectedEcgClassIndex = classIdx;
       _ecgSamples = beat;
       _ecgRawController.text = beat.join(', ');
-      _ecgProbs = probs;
+      _ecgProbs = res.probabilities;
       _computedBpm = input.estimateBpm();
+      _ecgEngineStatus = res.engineUsed;
     });
     if (notify) _emitEvaluation();
   }
@@ -127,22 +132,22 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
     );
 
     final EcgModelInput input = EcgModelInput(beat187);
-    final List<double> probs = await NasaAiService.runEcgModel(input);
+    final EcgPredictionResult res = await NasaAiService.runEcgModel(input);
 
     if (!mounted) return;
     setState(() {
       _ecgSamples = beat187;
-      _ecgProbs = probs;
+      _ecgProbs = res.probabilities;
       _computedBpm = input.estimateBpm();
+      _ecgEngineStatus = res.engineUsed;
     });
 
     _emitEvaluation();
-    final double anomalyScore = 1.0 - probs[0];
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         backgroundColor: NasaColors.deepSpaceBlue,
         content: Text(
-          'Module A (ecg_heartbeat.tflite): Anomaly Score (1 - P[N]) = ${(anomalyScore * 100).toStringAsFixed(1)}%',
+          '${res.engineUsed} -> Anomaly: ${(res.anomalyScore * 100).toStringAsFixed(1)}%',
         ),
       ),
     );
@@ -163,14 +168,13 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
       active: _active ? 1 : 0,
     );
 
-    final CardioScalerParams scaler = await NasaAiService.getScaler();
-    final List<double> z = input.toStandardizedVector(scaler);
-    final double risk = await NasaAiService.runCardioModel(input);
+    final CardioPredictionResult res = await NasaAiService.runCardioModel(input);
 
     if (!mounted) return;
     setState(() {
-      _standardizedZ = z;
-      _cardioRisk = risk;
+      _standardizedZ = res.standardizedZ;
+      _cardioRisk = res.risk;
+      _cardioEngineStatus = res.engineUsed;
     });
 
     _emitEvaluation();
@@ -179,7 +183,7 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
         SnackBar(
           backgroundColor: NasaColors.deepSpaceBlue,
           content: Text(
-            'Module B (cardiovascular.tflite): Risk = ${(risk * 100).toStringAsFixed(1)}% | BMI = ${input.bmi.toStringAsFixed(1)}',
+            '${res.engineUsed} -> Risk: ${(res.risk * 100).toStringAsFixed(1)}%',
           ),
         ),
       );
@@ -191,11 +195,13 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
       neckDevDeg: _neckDevDeg,
       spineCurvDeg: _spineCurvDeg,
     );
-    final double risk = await NasaAiService.runPostureModel(input);
+    final PosturePredictionResult res =
+        await NasaAiService.runPostureModel(input);
 
     if (!mounted) return;
     setState(() {
-      _postureRisk = risk;
+      _postureRisk = res.risk;
+      _postureEngineStatus = res.engineUsed;
     });
 
     _emitEvaluation();
@@ -204,7 +210,7 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
         SnackBar(
           backgroundColor: NasaColors.deepSpaceBlue,
           content: Text(
-            'Module C (posture_keypoints.tflite): Ergonomic Risk = ${(risk * 100).toStringAsFixed(1)}%',
+            '${res.engineUsed} -> Posture Risk: ${(res.risk * 100).toStringAsFixed(1)}%',
           ),
         ),
       );
@@ -233,6 +239,9 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
         postureRisk: _postureRisk,
         neckDevDeg: _neckDevDeg,
         spineCurvDeg: _spineCurvDeg,
+        activeEngineLabel: NasaAiService.isLiveKerasConnected
+            ? 'LIVE KERAS SERVER'
+            : 'ON-DEVICE WEIGHTS',
       ),
     );
   }
@@ -255,7 +264,8 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
             indicatorColor: NasaColors.biometricCyan,
             labelColor: NasaColors.biometricCyan,
             unselectedLabelColor: NasaColors.nebulaGrey,
-            labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11),
+            labelStyle:
+                const TextStyle(fontWeight: FontWeight.bold, fontSize: 11),
             tabs: const [
               Tab(text: 'MODULE A: ECG\n[1, 187, 1]'),
               Tab(text: 'MODULE B: CARDIO\n[1, 12]'),
@@ -277,14 +287,10 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
     );
   }
 
-  // ===========================================================================
-  // TAB 1: MODULE A - ECG Heartbeat (MIT-BIH) 1D-CNN -> ecg_heartbeat.tflite
-  // ===========================================================================
   Widget _buildModuleATab() {
     final double anomalyProb = (1.0 - _ecgProbs[0]).clamp(0.0, 1.0);
-    final Color anomalyColor = anomalyProb > 0.35
-        ? NasaColors.orbitRed
-        : NasaColors.capsuleGreen;
+    final Color anomalyColor =
+        anomalyProb > 0.35 ? NasaColors.orbitRed : NasaColors.capsuleGreen;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
@@ -292,13 +298,11 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _buildSpecBanner(
-            title: 'MODULE A: ecg_heartbeat.tflite (MIT-BIH 1D-CNN)',
-            inputSpec: 'float32 [1, 187, 1] (min-max scaled 0..1, no scaler needed)',
-            outputSpec: 'float32 [1, 5] Softmax (N, S, V, F, Q) | Anomaly = 1 - output[0]',
+            title: 'MODULE A: $_ecgEngineStatus',
+            inputSpec: 'float32 [1, 187, 1] (MIT-BIH scaled 0..1)',
+            outputSpec: 'float32 [1, 5] Softmax (N, S, V, F, Q)',
           ),
           const SizedBox(height: 12),
-
-          // Heart-region Anomaly Score Card
           Container(
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
@@ -313,8 +317,9 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text(
-                      'HEART-REGION ANOMALY SCORE (1 - P[Normal])',
-                      style: TextStyle(color: NasaColors.nebulaGrey, fontSize: 10),
+                      'HEART ANOMALY SCORE (1 - P[Normal])',
+                      style:
+                          TextStyle(color: NasaColors.nebulaGrey, fontSize: 10),
                     ),
                     const SizedBox(height: 4),
                     Text(
@@ -332,7 +337,8 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
                   children: [
                     const Text(
                       'ESTIMATED HR',
-                      style: TextStyle(color: NasaColors.nebulaGrey, fontSize: 10),
+                      style:
+                          TextStyle(color: NasaColors.nebulaGrey, fontSize: 10),
                     ),
                     Text(
                       '$_computedBpm bpm',
@@ -348,8 +354,6 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
             ),
           ),
           const SizedBox(height: 14),
-
-          // 187 Örnekli Canlı EKG Grafiği
           Container(
             height: 135,
             width: double.infinity,
@@ -357,15 +361,18 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
             decoration: BoxDecoration(
               color: NasaColors.stationGrey,
               borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: NasaColors.biometricCyan.withValues(alpha: 0.4)),
+              border: Border.all(
+                  color: NasaColors.biometricCyan.withValues(alpha: 0.4)),
             ),
             child: CustomPaint(painter: _EcgWavePainter(_ecgSamples)),
           ),
           const SizedBox(height: 14),
-
           const Text(
             'LOAD MIT-BIH TEST BEAT (mitbih_test.csv CLASSES 0..4):',
-            style: TextStyle(color: NasaColors.nebulaGrey, fontSize: 11, fontWeight: FontWeight.bold),
+            style: TextStyle(
+                color: NasaColors.nebulaGrey,
+                fontSize: 11,
+                fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 8),
           Wrap(
@@ -386,21 +393,21 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
             }),
           ),
           const SizedBox(height: 14),
-
           TextField(
             controller: _ecgRawController,
             maxLines: 3,
             style: const TextStyle(fontSize: 11, fontFamily: 'monospace'),
             decoration: InputDecoration(
               labelText: '187 Float32 Samples (0.0 .. 1.0, comma-separated)',
-              labelStyle: const TextStyle(color: NasaColors.biometricCyan, fontSize: 12),
+              labelStyle:
+                  const TextStyle(color: NasaColors.biometricCyan, fontSize: 12),
               filled: true,
               fillColor: NasaColors.stationGrey,
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              border:
+                  OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
             ),
           ),
           const SizedBox(height: 12),
-
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
@@ -412,21 +419,24 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
               onPressed: _evaluateModuleA,
               icon: const Icon(Icons.monitor_heart_rounded),
               label: const Text(
-                'RUN ecg_heartbeat.tflite ([1, 187, 1])',
+                'RUN MODULE A (ECG MODEL)',
                 style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
               ),
             ),
           ),
           const SizedBox(height: 18),
-
           const Text(
             'RHYTHM PROBABILITIES — OUTPUT [1, 5]:',
-            style: TextStyle(color: NasaColors.pureWhite, fontWeight: FontWeight.bold, fontSize: 12),
+            style: TextStyle(
+                color: NasaColors.pureWhite,
+                fontWeight: FontWeight.bold,
+                fontSize: 12),
           ),
           const SizedBox(height: 10),
           ...List<Widget>.generate(5, (int index) {
             final double prob = _ecgProbs[index];
-            final Color barColor = index == 0 ? NasaColors.capsuleGreen : NasaColors.orbitRed;
+            final Color barColor =
+                index == 0 ? NasaColors.capsuleGreen : NasaColors.orbitRed;
             return Padding(
               padding: const EdgeInsets.only(bottom: 10),
               child: Column(
@@ -444,7 +454,10 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
                       ),
                       Text(
                         '${(prob * 100).toStringAsFixed(1)}%',
-                        style: TextStyle(color: barColor, fontWeight: FontWeight.bold, fontSize: 12),
+                        style: TextStyle(
+                            color: barColor,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12),
                       ),
                     ],
                   ),
@@ -465,9 +478,6 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
     );
   }
 
-  // ===========================================================================
-  // TAB 2: MODULE B - Cardiovascular Risk (cardio_train.csv) -> cardiovascular.tflite
-  // ===========================================================================
   Widget _buildModuleBTab() {
     final CardioModelInput currentInput = CardioModelInput(
       ageYears: _ageYears,
@@ -485,7 +495,9 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
 
     final Color riskColor = _cardioRisk > 0.50
         ? NasaColors.orbitRed
-        : (_cardioRisk > 0.30 ? NasaColors.warningAmber : NasaColors.capsuleGreen);
+        : (_cardioRisk > 0.30
+            ? NasaColors.warningAmber
+            : NasaColors.capsuleGreen);
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
@@ -493,12 +505,12 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _buildSpecBanner(
-            title: 'MODULE B: cardiovascular.tflite + cardiovascular_scaler.json',
-            inputSpec: 'float32 [1, 12] -> z = (raw - mean) / scale | gender: 1=F, 2=M',
+            title: 'MODULE B: $_cardioEngineStatus',
+            inputSpec:
+                'float32 [1, 12] -> z = (raw - mean) / scale | gender: 1=F, 2=M',
             outputSpec: 'float32 [1, 1] Sigmoid Risk Probability (0.0..1.0)',
           ),
           const SizedBox(height: 12),
-
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
@@ -514,12 +526,16 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
                   children: [
                     const Text(
                       'CARDIOVASCULAR RISK [1, 1]',
-                      style: TextStyle(color: NasaColors.nebulaGrey, fontSize: 11),
+                      style:
+                          TextStyle(color: NasaColors.nebulaGrey, fontSize: 11),
                     ),
                     const SizedBox(height: 4),
                     Text(
                       '${(_cardioRisk * 100).toStringAsFixed(1)}%',
-                      style: TextStyle(color: riskColor, fontSize: 24, fontWeight: FontWeight.bold),
+                      style: TextStyle(
+                          color: riskColor,
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold),
                     ),
                   ],
                 ),
@@ -528,7 +544,8 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
                   children: [
                     const Text(
                       'COMPUTED BMI (FEATURE #12)',
-                      style: TextStyle(color: NasaColors.nebulaGrey, fontSize: 10),
+                      style:
+                          TextStyle(color: NasaColors.nebulaGrey, fontSize: 10),
                     ),
                     Text(
                       '${currentInput.bmi.toStringAsFixed(2)} kg/m²',
@@ -544,7 +561,6 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
             ),
           ),
           const SizedBox(height: 14),
-
           _buildSliderRow(
             label: '1. age_years (age_days / 365.25)',
             value: _ageYears,
@@ -556,8 +572,6 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
               _evaluateModuleB(showToast: false);
             },
           ),
-
-          // Dikkat: cardiovascular_train.py satır 47: gender 1=female, 2=male
           Row(
             children: [
               const Expanded(
@@ -588,7 +602,6 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
             ],
           ),
           const SizedBox(height: 8),
-
           _buildSliderRow(
             label: '3. height (120..220 cm)',
             value: _heightCm,
@@ -640,7 +653,6 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
             },
           ),
           const SizedBox(height: 8),
-
           _buildTierSelector(
             label: '7. cholesterol (1=normal, 2=above, 3=well above)',
             currentValue: _cholesterol,
@@ -659,14 +671,14 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
             },
           ),
           const SizedBox(height: 10),
-
           Card(
             margin: EdgeInsets.zero,
             color: NasaColors.stationGrey,
             child: Column(
               children: [
                 SwitchListTile(
-                  title: const Text('9. smoke (0 or 1)', style: TextStyle(fontSize: 13)),
+                  title:
+                      const Text('9. smoke (0 or 1)', style: TextStyle(fontSize: 13)),
                   value: _smoke,
                   activeThumbColor: NasaColors.orbitRed,
                   onChanged: (bool v) {
@@ -675,7 +687,8 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
                   },
                 ),
                 SwitchListTile(
-                  title: const Text('10. alco (0 or 1)', style: TextStyle(fontSize: 13)),
+                  title:
+                      const Text('10. alco (0 or 1)', style: TextStyle(fontSize: 13)),
                   value: _alco,
                   activeThumbColor: NasaColors.warningAmber,
                   onChanged: (bool v) {
@@ -684,7 +697,8 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
                   },
                 ),
                 SwitchListTile(
-                  title: const Text('11. active (0 or 1)', style: TextStyle(fontSize: 13)),
+                  title: const Text('11. active (0 or 1)',
+                      style: TextStyle(fontSize: 13)),
                   value: _active,
                   activeThumbColor: NasaColors.capsuleGreen,
                   onChanged: (bool v) {
@@ -696,8 +710,6 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
             ),
           ),
           const SizedBox(height: 12),
-
-          // StandardScaler z vektörü önizlemesi
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(10),
@@ -715,7 +727,6 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
             ),
           ),
           const SizedBox(height: 14),
-
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
@@ -727,7 +738,7 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
               onPressed: () => _evaluateModuleB(showToast: true),
               icon: const Icon(Icons.calculate_rounded),
               label: const Text(
-                'RUN cardiovascular.tflite ([1, 12])',
+                'RUN MODULE B (CARDIO MODEL)',
                 style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
               ),
             ),
@@ -737,13 +748,12 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
     );
   }
 
-  // ===========================================================================
-  // TAB 3: MODULE C - Posture Keypoints (MobileNetV2) -> posture_keypoints.tflite
-  // ===========================================================================
   Widget _buildModuleCTab() {
     final Color postureColor = _postureRisk > 0.50
         ? NasaColors.orbitRed
-        : (_postureRisk > 0.30 ? NasaColors.warningAmber : NasaColors.capsuleGreen);
+        : (_postureRisk > 0.30
+            ? NasaColors.warningAmber
+            : NasaColors.capsuleGreen);
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
@@ -751,12 +761,13 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _buildSpecBanner(
-            title: 'MODULE C: posture_keypoints.tflite (MobileNetV2 0.35)',
-            inputSpec: 'float32 [1, 224, 224, 3] RGB 0..255 (Rescaling is INSIDE model)',
-            outputSpec: '4 Keypoints (0:ear, 1:upper, 2:mid, 3:low back) -> Risk [1, 1]',
+            title: 'MODULE C: $_postureEngineStatus',
+            inputSpec:
+                'float32 [1, 224, 224, 3] RGB 0..255 (Rescaling is INSIDE model)',
+            outputSpec:
+                '4 Keypoints (0:ear, 1:upper, 2:mid, 3:low back) -> Risk [1, 1]',
           ),
           const SizedBox(height: 14),
-
           Center(
             child: Container(
               width: 224,
@@ -776,7 +787,6 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
             ),
           ),
           const SizedBox(height: 16),
-
           _buildSliderRow(
             label: 'Neck Deviation Angle (neck_dev: ok=15°, bad=45°)',
             value: _neckDevDeg,
@@ -800,10 +810,12 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
             },
           ),
           const SizedBox(height: 8),
-
           const Text(
             'POSTURE KEYPOINT PRESETS (melsmm/posture-keypoints-detection):',
-            style: TextStyle(color: NasaColors.nebulaGrey, fontSize: 11, fontWeight: FontWeight.bold),
+            style: TextStyle(
+                color: NasaColors.nebulaGrey,
+                fontSize: 11,
+                fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 8),
           Card(
@@ -849,7 +861,6 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
             ),
           ),
           const SizedBox(height: 16),
-
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
@@ -891,7 +902,8 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
       decoration: BoxDecoration(
         color: NasaColors.deepSpaceBlue.withValues(alpha: 0.3),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: NasaColors.biometricCyan.withValues(alpha: 0.4)),
+        border:
+            Border.all(color: NasaColors.biometricCyan.withValues(alpha: 0.4)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -905,8 +917,12 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
             ),
           ),
           const SizedBox(height: 4),
-          Text('• Input: $inputSpec', style: const TextStyle(color: NasaColors.biometricCyan, fontSize: 11)),
-          Text('• Output: $outputSpec', style: const TextStyle(color: NasaColors.starlightWhite, fontSize: 11)),
+          Text('• Input: $inputSpec',
+              style:
+                  const TextStyle(color: NasaColors.biometricCyan, fontSize: 11)),
+          Text('• Output: $outputSpec',
+              style: const TextStyle(
+                  color: NasaColors.starlightWhite, fontSize: 11)),
         ],
       ),
     );
@@ -930,12 +946,16 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
               child: Text(
                 label,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+                style:
+                    const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
               ),
             ),
             Text(
               '${value.toStringAsFixed(value % 1 == 0 ? 0 : 1)} $unit',
-              style: const TextStyle(color: NasaColors.biometricCyan, fontWeight: FontWeight.bold, fontSize: 12),
+              style: const TextStyle(
+                  color: NasaColors.biometricCyan,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12),
             ),
           ],
         ),
@@ -964,7 +984,8 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500)),
+        Text(label,
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500)),
         const SizedBox(height: 6),
         Row(
           children: <int>[1, 2, 3].map((int tier) {
@@ -973,7 +994,8 @@ class AiDiagnosticsScreenState extends State<AiDiagnosticsScreen>
               child: Padding(
                 padding: const EdgeInsets.only(right: 6),
                 child: ChoiceChip(
-                  label: Text(labels[tier]!, style: const TextStyle(fontSize: 11)),
+                  label:
+                      Text(labels[tier]!, style: const TextStyle(fontSize: 11)),
                   selected: selected,
                   selectedColor: NasaColors.deepSpaceBlue,
                   onSelected: (_) => onChanged(tier),
@@ -1026,7 +1048,6 @@ class _EcgWavePainter extends CustomPainter {
   bool shouldRepaint(covariant _EcgWavePainter oldDelegate) => true;
 }
 
-/// posture_keypoints_train.py içindeki 4 omurga noktasını (0=ear, 1=upper, 2=mid, 3=lower) çizen Painter
 class _PostureKeypointsPainter extends CustomPainter {
   final double neckDevDeg;
   final double spineCurvDeg;
