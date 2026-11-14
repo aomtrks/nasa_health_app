@@ -1,0 +1,16 @@
+{
+  "input_shape": [
+    1,
+    224,
+    224,
+    3
+  ],
+  "input_dtype": "float32",
+  "input_range": "RGB pixel values 0..255 (rescaling is inside the model)",
+  "output_shape": [
+    1,
+    1
+  ],
+  "risk_score": "output[0] in 0..1 (higher = worse posture)",
+  "keypoints": "0 ear, 1 upper back, 2 mid back, 3 lower back (training targets only)"
+}
