@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:nasa_health_app/core/ml/ai_input_models.dart';
 import 'package:nasa_health_app/core/theme/app_theme.dart';
 import 'package:nasa_health_app/features/dashboard/screens/ai_diagnostics_screen.dart';
 import 'package:nasa_health_app/features/dashboard/widgets/astronaut_3d_viewer.dart';
 import 'package:nasa_health_app/features/dashboard/widgets/nasa_drawer.dart';
+import 'package:nasa_health_app/services/nasa_space_weather_service.dart';
 
 class MissionTaskItem {
   final String title;
@@ -65,6 +67,54 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   final GlobalKey<AiDiagnosticsScreenState> _aiLabKey =
       GlobalKey<AiDiagnosticsScreenState>();
+
+  // --- NASA DONKI space weather (live, or saved copy when offline) ---
+  final NasaSpaceWeatherService _nasa = NasaSpaceWeatherService();
+  Timer? _nasaTimer;
+  String _nasaStatus = ''; // empty = no NASA data yet
+  bool _nasaCached = false;
+  double _nasaMultiplier = 1.0;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadNasaSpaceWeather();
+    // Re-check every 5 minutes so the card flips back to LIVE
+    // as soon as the connection returns.
+    _nasaTimer = Timer.periodic(
+        const Duration(minutes: 5), (_) => _loadNasaSpaceWeather());
+  }
+
+  @override
+  void dispose() {
+    _nasaTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _loadNasaSpaceWeather() async {
+    final SpaceWeatherSnapshot? snap = await _nasa.fetchRecent();
+    debugPrint(snap == null
+        ? 'NASA DONKI: no data (offline, nothing saved) ${_nasa.lastError}'
+        : 'NASA DONKI: ${snap.isCached ? "CACHED (${snap.age.inMinutes} min old)" : "LIVE"} '
+            'flares=${snap.solarFlares} strongest=${snap.strongestFlare} '
+            'sep=${snap.energeticParticleEvents} gst=${snap.geomagneticStorm} '
+            '-> ${snap.statusLabel}');
+    if (snap == null || !mounted) return; // keep built-in values
+    setState(() {
+      _nasaStatus = snap.statusLabel;
+      _nasaCached = snap.isCached;
+      _nasaMultiplier = snap.radiationMultiplier;
+      // Always computed from the environment's baseline, so repeated
+      // refreshes never compound the multiplier.
+      _liveRadiationMsv =
+          _envProfiles[_selectedEnvironment]!.radiationMsvDay * _nasaMultiplier;
+      _liveRadiationColor = snap.energeticParticleEvents > 0
+          ? NasaColors.orbitRed
+          : snap.statusLabel == 'MAGNETOSPHERE OK'
+              ? NasaColors.capsuleGreen
+              : NasaColors.warningAmber;
+    });
+  }
 
   int _selectedDrawerIndex = 0;
   String _selectedEnvironment = 'ISS Orbit (Micro-G)';
@@ -188,7 +238,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final SpaceEnvironmentProfile profile = _envProfiles[envName]!;
     setState(() {
       _selectedEnvironment = envName;
-      _liveRadiationMsv = profile.radiationMsvDay;
+      _liveRadiationMsv = profile.radiationMsvDay * _nasaMultiplier;
       _liveRadiationColor = profile.radiationColor;
       _liveHeartRate = (72 + profile.baselineHrDelta).clamp(55, 165);
 
@@ -287,7 +337,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
             ),
             Text(
-              'ENV: $_selectedEnvironment • $_activeEngineBadge',
+              'ENV: $_selectedEnvironment • $_activeEngineBadge'
+              '${_nasaStatus.isEmpty ? '' : (_nasaCached ? ' • NASA DONKI CACHED' : ' • NASA DONKI LIVE')}',
               overflow: TextOverflow.ellipsis,
               style:
                   const TextStyle(fontSize: 10, color: NasaColors.biometricCyan),
@@ -432,7 +483,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 onTap: _showQuickPostureModal,
               ),
               _VitalMetricCard(
-                title: 'RADIATION & STRESS',
+                title: _nasaStatus.isEmpty
+                    ? 'RADIATION & STRESS'
+                    : (_nasaCached
+                        ? 'RADIATION • NASA SAVED'
+                        : 'RADIATION • NASA LIVE'),
                 value: _liveRadiationMsv.toStringAsFixed(2),
                 unit: 'mSv/d',
                 statusText:

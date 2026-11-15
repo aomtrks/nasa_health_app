@@ -196,6 +196,16 @@ class NasaDrawer extends StatelessWidget {
                       letterSpacing: 0.6,
                     ),
                   ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'Space weather data: NASA CCMC DONKI\n(ccmc.gsfc.nasa.gov/DONKI)',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: NasaColors.biometricCyan,
+                      fontSize: 9,
+                      letterSpacing: 0.4,
+                    ),
+                  ),
                 ],
               ),
             ),
