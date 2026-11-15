@@ -226,6 +226,7 @@ nasa_health_app/
     └── main.dart                         # Application entry point
 ```
 
+
 ### Prerequisites & Running the App
 1. **Install Flutter SDK** ($\ge 3.2.0$).
 2. **Fetch Dependencies:**
