@@ -13,11 +13,9 @@
 
 ## System Demonstration & Video Walkthrough
 
-<div align="center">
+![App Demonstration](assets/demo.gif)
 
-https://github.com/user-attachments/assets/demo.gif
-
-*Click the preview above to watch the full walkthrough of the 3D Holographic Biometric Twin, On-Device TFLite/LiteRT Diagnostic Lab, and Live NASA DONKI Space Weather Telemetry.*
+*The GIF above demonstrates the core navigation, UI components , 3D Holographic Biometric Twin, On-Device TFLite/LiteRT Diagnostic Lab, and Live NASA DONKI Space Weather Telemetry.*
 
 </div>
 
