@@ -15,7 +15,7 @@
 
 <div align="center">
 
-https://github.com/user-attachments/assets/YOUR-VIDEO-ASSET-ID-HERE
+https://github.com/user-attachments/assets/demo.gi
 
 *Click the preview above to watch the full walkthrough of the 3D Holographic Biometric Twin, On-Device TFLite/LiteRT Diagnostic Lab, and Live NASA DONKI Space Weather Telemetry.*
 
