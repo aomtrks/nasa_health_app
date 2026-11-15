@@ -67,7 +67,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       GlobalKey<AiDiagnosticsScreenState>();
 
   int _selectedDrawerIndex = 0;
-  String _selectedEnvironment = 'Deep Space Transit (0G)';
+  String _selectedEnvironment = 'ISS Orbit (Micro-G)';
   String _selectedBodyPart = 'Cardiovascular (Heart)';
 
   int _liveHeartRate = 72;
@@ -82,7 +82,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   double _liveNeckDev = 18.0;
 
   double _liveRadiationMsv = 0.42;
-  Color _liveRadiationColor = NasaColors.warningAmber;
+  Color _liveRadiationColor = NasaColors.capsuleGreen;
   String _activeEngineBadge = 'AI READY';
 
   FaceStateResult _faceState = const FaceStateResult(
@@ -215,36 +215,35 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
       _liveSystolic = bundle.systolic;
       _liveDiastolic = bundle.diastolic;
-      _liveCardioRisk = bundle.cardioRisk;
+      _liveCardioRisk =
+          (bundle.cardioRisk * 0.65) + (bundle.ecgAnomalyRisk * 0.35);
 
       _livePostureRisk = bundle.postureRisk;
       _liveNeckDev = bundle.neckDevDeg;
       _activeEngineBadge = bundle.activeEngineLabel;
 
-      final double combinedHeartRisk =
-          (bundle.ecgAnomalyRisk * 0.5) + (bundle.cardioRisk * 0.5);
       _bodyPartData['Cardiovascular (Heart)'] = BodyPartStatus(
-        status: combinedHeartRisk > 0.40 ? 'HIGH RISK' : 'NOMINAL',
-        color: combinedHeartRisk > 0.40
+        status: _liveCardioRisk > 0.35 ? 'HIGH RISK' : 'NOMINAL',
+        color: _liveCardioRisk > 0.35
             ? NasaColors.orbitRed
             : NasaColors.capsuleGreen,
         hazard: 'Module A (ECG) & Module B (Cardio)',
         insight:
-            'HR: $_liveHeartRate bpm ($_liveEcgStatus) | BP: $_liveSystolic/$_liveDiastolic mmHg | Cardio Risk: ${(bundle.cardioRisk * 100).toStringAsFixed(1)}%',
-        action: combinedHeartRisk > 0.40
+            'HR: $_liveHeartRate bpm ($_liveEcgStatus) | BP: $_liveSystolic/$_liveDiastolic mmHg | Combined Risk: ${(_liveCardioRisk * 100).toStringAsFixed(1)}%',
+        action: _liveCardioRisk > 0.35
             ? 'Alert Flight Surgeon & perform 12-lead resting ECG immediately.'
             : 'Cardiovascular parameters within nominal mission thresholds.',
       );
 
       _bodyPartData['Musculoskeletal (Spine)'] = BodyPartStatus(
-        status: bundle.postureRisk > 0.40 ? 'POSTURE ALERT' : 'OPTIMAL',
-        color: bundle.postureRisk > 0.40
+        status: bundle.postureRisk > 0.35 ? 'POSTURE ALERT' : 'OPTIMAL',
+        color: bundle.postureRisk > 0.35
             ? NasaColors.warningAmber
             : NasaColors.capsuleGreen,
         hazard: 'Module C (4-Keypoint Posture)',
         insight:
             'Ergonomic Risk: ${(bundle.postureRisk * 100).toStringAsFixed(1)}% | Neck Dev: ${bundle.neckDevDeg.toStringAsFixed(1)}° | Spine Curv: ${bundle.spineCurvDeg.toStringAsFixed(1)}°',
-        action: bundle.postureRisk > 0.40
+        action: bundle.postureRisk > 0.35
             ? 'Adjust harness tension and perform 30 min resistive spinal loading.'
             : 'Spinal alignment nominal for microgravity operations.',
       );
@@ -324,26 +323,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final BodyPartStatus activePartInfo = _bodyPartData[_selectedBodyPart]!;
     final SpaceEnvironmentProfile envProfile =
         _envProfiles[_selectedEnvironment]!;
-    final Color bpColor = _liveCardioRisk > 0.45
+    final Color bpColor = _liveCardioRisk > 0.35
         ? NasaColors.orbitRed
-        : (_liveCardioRisk > 0.28
+        : (_liveCardioRisk > 0.25
             ? NasaColors.warningAmber
             : NasaColors.capsuleGreen);
-    final Color postureColor = _livePostureRisk > 0.45
+    final Color postureColor = _livePostureRisk > 0.35
         ? NasaColors.orbitRed
-        : (_livePostureRisk > 0.28
+        : (_livePostureRisk > 0.25
             ? NasaColors.warningAmber
             : NasaColors.capsuleGreen);
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _buildEnvironmentSelector(),
           const SizedBox(height: 16),
 
-          // PERFECTUM_3D ANATOMİK İNSAN BEDENİ (Kemik + Kas + Damar Sistemi)
+          // PERFECTUM_3D ANATOMİK İNSAN BEDENİ (Deri + Kemik + Kas + Damar + Risk Pulse)
           Astronaut3DViewer(
             selectedBodyRegion: _selectedBodyPart,
             onBodyRegionSelected: (String region) {
@@ -353,6 +352,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
             postureRisk: _livePostureRisk,
             neuroStress: _faceState.stress,
             heartRateBpm: _liveHeartRate,
+            systolicBp: _liveSystolic,
+            diastolicBp: _liveDiastolic,
+            radiationMsv: _liveRadiationMsv,
             gravityLabel: envProfile.gravityLabel,
           ),
 
@@ -376,12 +378,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
               TextButton.icon(
                 onPressed: () => _openAiLabTab(0),
-                icon: const Icon(Icons.tune_rounded,
-                    color: NasaColors.biometricCyan, size: 16),
+                icon: const Icon(
+                  Icons.tune_rounded,
+                  color: NasaColors.biometricCyan,
+                  size: 16,
+                ),
                 label: const Text(
                   'AI LAB (A/B/C)',
-                  style:
-                      TextStyle(color: NasaColors.biometricCyan, fontSize: 11),
+                  style: TextStyle(
+                    color: NasaColors.biometricCyan,
+                    fontSize: 11,
+                  ),
                 ),
               ),
             ],
@@ -422,7 +429,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     'RISK: ${(_livePostureRisk * 100).toStringAsFixed(0)}%',
                 statusColor: postureColor,
                 icon: Icons.accessibility_new_rounded,
-                onTap: () => _openAiLabTab(2),
+                onTap: _showQuickPostureModal,
               ),
               _VitalMetricCard(
                 title: 'RADIATION & STRESS',
@@ -444,6 +451,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   void _showQuickHeartModal() {
     showModalBottomSheet<void>(
       context: context,
+      isScrollControlled: true,
       backgroundColor: NasaColors.stationGrey,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
@@ -452,81 +460,99 @@ class _DashboardScreenState extends State<DashboardScreen> {
         int tempHr = _liveHeartRate;
         return StatefulBuilder(
           builder: (BuildContext context, StateSetter setModalState) {
-            return Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'QUICK INPUT: HEART RATE & MODULE A (ECG)',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    'Current Heart Rate: $tempHr bpm',
-                    style: const TextStyle(
-                        color: NasaColors.biometricCyan, fontSize: 14),
-                  ),
-                  Slider(
-                    value: tempHr.toDouble(),
-                    min: 50,
-                    max: 165,
-                    activeColor: NasaColors.biometricCyan,
-                    onChanged: (double v) =>
-                        setModalState(() => tempHr = v.round()),
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: () {
-                            Navigator.pop(ctx);
-                            _openAiLabTab(0);
-                          },
-                          child: const Text('187-SAMPLE ECG LAB'),
-                        ),
+            final double bottomPad = MediaQuery.viewPaddingOf(context).bottom;
+            return SafeArea(
+              top: false,
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(20, 20, 20, 20 + bottomPad),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'QUICK INPUT: HEART RATE & MODULE A (ECG)',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 15,
                       ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: ElevatedButton(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: NasaColors.biometricCyan,
-                            foregroundColor: NasaColors.darkMatter,
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Current Heart Rate: $tempHr bpm',
+                      style: const TextStyle(
+                        color: NasaColors.biometricCyan,
+                        fontSize: 14,
+                      ),
+                    ),
+                    Slider(
+                      value: tempHr.toDouble(),
+                      min: 50,
+                      max: 165,
+                      activeColor: NasaColors.biometricCyan,
+                      onChanged: (double v) =>
+                          setModalState(() => tempHr = v.round()),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () {
+                              Navigator.pop(ctx);
+                              _openAiLabTab(0);
+                            },
+                            child: const Text('187-SAMPLE ECG LAB'),
                           ),
-                          onPressed: () {
-                            setState(() {
-                              _liveHeartRate = tempHr;
-                              _liveEcgStatus = tempHr > 100
-                                  ? '1 = S (Tachycardia)'
-                                  : (tempHr < 58
-                                      ? 'Bradycardia'
-                                      : '0 = N (Normal)');
-                              _liveEcgColor = (tempHr > 100 || tempHr < 58)
-                                  ? NasaColors.orbitRed
-                                  : NasaColors.capsuleGreen;
-                              _selectedBodyPart = 'Cardiovascular (Heart)';
-                              _bodyPartData['Cardiovascular (Heart)'] =
-                                  BodyPartStatus(
-                                status: _liveEcgStatus,
-                                color: _liveEcgColor,
-                                hazard: 'Manual Telemetry + ecg_heartbeat.tflite',
-                                insight:
-                                    'Updated HR: $_liveHeartRate bpm | BP: $_liveSystolic/$_liveDiastolic mmHg.',
-                                action: tempHr > 100
-                                    ? 'Run 187-sample ECG check in Module A immediately.'
-                                    : 'Heart rate within nominal mission limits.',
-                              );
-                            });
-                            Navigator.pop(ctx);
-                          },
-                          child: const Text('APPLY'),
                         ),
-                      ),
-                    ],
-                  ),
-                ],
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: NasaColors.biometricCyan,
+                              foregroundColor: NasaColors.darkMatter,
+                            ),
+                            onPressed: () {
+                              final bool isAbnormalHr =
+                                  tempHr > 100 || tempHr < 58;
+                              setState(() {
+                                _liveHeartRate = tempHr;
+                                _liveEcgStatus = tempHr > 100
+                                    ? '1 = S (Tachycardia)'
+                                    : (tempHr < 58
+                                          ? 'Bradycardia'
+                                          : '0 = N (Normal)');
+                                _liveEcgColor = isAbnormalHr
+                                    ? NasaColors.orbitRed
+                                    : NasaColors.capsuleGreen;
+                                _liveCardioRisk = isAbnormalHr
+                                    ? ((tempHr - 72).abs() / 95.0).clamp(
+                                        0.48,
+                                        0.92,
+                                      )
+                                    : 0.16;
+                                _selectedBodyPart = 'Cardiovascular (Heart)';
+                                _bodyPartData['Cardiovascular (Heart)'] =
+                                    BodyPartStatus(
+                                      status: _liveEcgStatus,
+                                      color: _liveEcgColor,
+                                      hazard:
+                                          'Manual Telemetry + ecg_heartbeat.tflite',
+                                      insight:
+                                          'Updated HR: $_liveHeartRate bpm | BP: $_liveSystolic/$_liveDiastolic mmHg.',
+                                      action: isAbnormalHr
+                                          ? 'Run 187-sample ECG check in Module A immediately.'
+                                          : 'Heart rate within nominal mission limits.',
+                                    );
+                              });
+                              Navigator.pop(ctx);
+                            },
+                            child: const Text('APPLY'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             );
           },
@@ -538,6 +564,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   void _showQuickBpModal() {
     showModalBottomSheet<void>(
       context: context,
+      isScrollControlled: true,
       backgroundColor: NasaColors.stationGrey,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
@@ -547,106 +574,217 @@ class _DashboardScreenState extends State<DashboardScreen> {
         int tempDia = _liveDiastolic;
         return StatefulBuilder(
           builder: (BuildContext context, StateSetter setModalState) {
-            return Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'QUICK INPUT: BLOOD PRESSURE (MODULE B)',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-                  ),
-                  const SizedBox(height: 12),
-                  Text('Systolic BP (ap_hi): $tempSys mmHg'),
-                  Slider(
-                    value: tempSys.toDouble(),
-                    min: 90,
-                    max: 195,
-                    activeColor: NasaColors.biometricCyan,
-                    onChanged: (double v) {
-                      setModalState(() {
-                        tempSys = v.round();
-                        if (tempSys <= tempDia) tempDia = tempSys - 15;
-                      });
-                    },
-                  ),
-                  Text('Diastolic BP (ap_lo): $tempDia mmHg'),
-                  Slider(
-                    value: tempDia.toDouble(),
-                    min: 55,
-                    max: 125,
-                    activeColor: NasaColors.biometricCyan,
-                    onChanged: (double v) {
-                      setModalState(() {
-                        tempDia = v.round();
-                        if (tempDia >= tempSys) tempSys = tempDia + 15;
-                      });
-                    },
-                  ),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: () {
-                            Navigator.pop(ctx);
-                            _openAiLabTab(1);
-                          },
-                          child: const Text('ALL 12 FEATURES'),
-                        ),
+            final double bottomPad = MediaQuery.viewPaddingOf(context).bottom;
+            return SafeArea(
+              top: false,
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(20, 20, 20, 20 + bottomPad),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'QUICK INPUT: BLOOD PRESSURE (MODULE B)',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 15,
                       ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: ElevatedButton(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: NasaColors.biometricCyan,
-                            foregroundColor: NasaColors.darkMatter,
+                    ),
+                    const SizedBox(height: 12),
+                    Text('Systolic BP (ap_hi): $tempSys mmHg'),
+                    Slider(
+                      value: tempSys.toDouble(),
+                      min: 90,
+                      max: 195,
+                      activeColor: NasaColors.biometricCyan,
+                      onChanged: (double v) {
+                        setModalState(() {
+                          tempSys = v.round();
+                          if (tempSys <= tempDia) tempDia = tempSys - 15;
+                        });
+                      },
+                    ),
+                    Text('Diastolic BP (ap_lo): $tempDia mmHg'),
+                    Slider(
+                      value: tempDia.toDouble(),
+                      min: 55,
+                      max: 125,
+                      activeColor: NasaColors.biometricCyan,
+                      onChanged: (double v) {
+                        setModalState(() {
+                          tempDia = v.round();
+                          if (tempDia >= tempSys) tempSys = tempDia + 15;
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () {
+                              Navigator.pop(ctx);
+                              _openAiLabTab(1);
+                            },
+                            child: const Text('ALL 12 FEATURES'),
                           ),
-                          onPressed: () async {
-                            final CardioModelInput input = CardioModelInput(
-                              ageYears: 38.0,
-                              gender: 2,
-                              heightCm: 176.0,
-                              weightKg: 75.0,
-                              apHi: tempSys.toDouble(),
-                              apLo: tempDia.toDouble(),
-                              cholesterol: 1,
-                              gluc: 1,
-                              smoke: 0,
-                              alco: 0,
-                              active: 1,
-                            );
-                            final CardioPredictionResult res =
-                                await NasaAiService.runCardioModel(input);
-                            if (!mounted) return;
-                            setState(() {
-                              _liveSystolic = tempSys;
-                              _liveDiastolic = tempDia;
-                              _liveCardioRisk = res.risk;
-                              _selectedBodyPart = 'Cardiovascular (Heart)';
-                              _bodyPartData['Cardiovascular (Heart)'] =
-                                  BodyPartStatus(
-                                status:
-                                    res.risk > 0.40 ? 'HIGH RISK' : 'NOMINAL',
-                                color: res.risk > 0.40
-                                    ? NasaColors.orbitRed
-                                    : NasaColors.capsuleGreen,
-                                hazard: res.engineUsed,
-                                insight:
-                                    'BP: $_liveSystolic/$_liveDiastolic mmHg | Module B Risk: ${(res.risk * 100).toStringAsFixed(1)}%.',
-                                action: res.risk > 0.40
-                                    ? 'Reduce sodium intake & monitor cuff pressure every 4h.'
-                                    : 'Blood pressure optimal.',
-                              );
-                            });
-                            if (ctx.mounted) Navigator.pop(ctx);
-                          },
-                          child: const Text('RUN MODULE B'),
                         ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: NasaColors.biometricCyan,
+                              foregroundColor: NasaColors.darkMatter,
+                            ),
+                            onPressed: () async {
+                              final CardioModelInput input = CardioModelInput(
+                                ageYears: 38.0,
+                                gender: 2,
+                                heightCm: 176.0,
+                                weightKg: 75.0,
+                                apHi: tempSys.toDouble(),
+                                apLo: tempDia.toDouble(),
+                                cholesterol: 1,
+                                gluc: 1,
+                                smoke: 0,
+                                alco: 0,
+                                active: 1,
+                              );
+                              final CardioPredictionResult res =
+                                  await NasaAiService.runCardioModel(input);
+                              if (!mounted) return;
+                              setState(() {
+                                _liveSystolic = tempSys;
+                                _liveDiastolic = tempDia;
+                                _liveCardioRisk = res.risk;
+                                _selectedBodyPart = 'Cardiovascular (Heart)';
+                                _bodyPartData['Cardiovascular (Heart)'] =
+                                    BodyPartStatus(
+                                      status: res.risk > 0.35
+                                          ? 'HIGH RISK'
+                                          : 'NOMINAL',
+                                      color: res.risk > 0.35
+                                          ? NasaColors.orbitRed
+                                          : NasaColors.capsuleGreen,
+                                      hazard: res.engineUsed,
+                                      insight:
+                                          'BP: $_liveSystolic/$_liveDiastolic mmHg | Module B Risk: ${(res.risk * 100).toStringAsFixed(1)}%.',
+                                      action: res.risk > 0.35
+                                          ? 'Reduce sodium intake & monitor cuff pressure every 4h.'
+                                          : 'Blood pressure optimal.',
+                                    );
+                              });
+                              if (ctx.mounted) Navigator.pop(ctx);
+                            },
+                            child: const Text('RUN MODULE B'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _showQuickPostureModal() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: NasaColors.stationGrey,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (BuildContext ctx) {
+        double tempNeck = _liveNeckDev;
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setModalState) {
+            final double bottomPad = MediaQuery.viewPaddingOf(context).bottom;
+            final double estRisk = ((tempNeck - 15.0) / 30.0).clamp(0.05, 0.95);
+            return SafeArea(
+              top: false,
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(20, 20, 20, 20 + bottomPad),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'QUICK INPUT: SPINE POSTURE (MODULE C)',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 15,
                       ),
-                    ],
-                  ),
-                ],
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      'Neck/Spine Inclination: ${tempNeck.toStringAsFixed(1)}° | Est. Risk: ${(estRisk * 100).toStringAsFixed(0)}%',
+                      style: const TextStyle(
+                        color: NasaColors.biometricCyan,
+                        fontSize: 13,
+                      ),
+                    ),
+                    Slider(
+                      value: tempNeck.clamp(5.0, 50.0),
+                      min: 5.0,
+                      max: 50.0,
+                      activeColor: NasaColors.biometricCyan,
+                      onChanged: (double v) =>
+                          setModalState(() => tempNeck = v),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () {
+                              Navigator.pop(ctx);
+                              _openAiLabTab(2);
+                            },
+                            child: const Text('CAMERA / LAB C'),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: NasaColors.biometricCyan,
+                              foregroundColor: NasaColors.darkMatter,
+                            ),
+                            onPressed: () {
+                              setState(() {
+                                _liveNeckDev = tempNeck;
+                                _livePostureRisk = estRisk;
+                                _selectedBodyPart = 'Musculoskeletal (Spine)';
+                                _bodyPartData['Musculoskeletal (Spine)'] =
+                                    BodyPartStatus(
+                                      status: estRisk > 0.35
+                                          ? 'POSTURE ALERT'
+                                          : 'OPTIMAL',
+                                      color: estRisk > 0.35
+                                          ? NasaColors.warningAmber
+                                          : NasaColors.capsuleGreen,
+                                      hazard: 'Module C (4-Keypoint Posture)',
+                                      insight:
+                                          'Posture Risk: ${(estRisk * 100).toStringAsFixed(1)}% | Neck Deviation: ${tempNeck.toStringAsFixed(1)}°.',
+                                      action: estRisk > 0.35
+                                          ? 'Adjust harness tension and perform resistive spinal loading.'
+                                          : 'Spinal alignment nominal.',
+                                    );
+                              });
+                              Navigator.pop(ctx);
+                            },
+                            child: const Text('APPLY'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             );
           },
@@ -658,6 +796,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   void _showFaceAndRadiationModal() {
     showModalBottomSheet<void>(
       context: context,
+      isScrollControlled: true,
       backgroundColor: NasaColors.stationGrey,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
@@ -668,84 +807,106 @@ class _DashboardScreenState extends State<DashboardScreen> {
         double headTilt = _faceState.headOffset;
         return StatefulBuilder(
           builder: (BuildContext context, StateSetter setModalState) {
+            final double bottomPad = MediaQuery.viewPaddingOf(context).bottom;
             final double fatigue = (1.0 - eyeOpen).clamp(0.0, 1.0);
             final double stress =
-                (0.4 * (1.0 - smile) + 0.4 * fatigue + 0.2 * headTilt)
-                    .clamp(0.0, 1.0);
+                (0.4 * (1.0 - smile) + 0.4 * fatigue + 0.2 * headTilt).clamp(
+                  0.0,
+                  1.0,
+                );
 
-            return Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'NEUROLOGICAL FATIGUE & STRESS PARAMETERS',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Fatigue: ${(fatigue * 100).toStringAsFixed(0)}% | Stress Score: ${(stress * 100).toStringAsFixed(0)}%',
-                    style: const TextStyle(
-                        color: NasaColors.biometricCyan, fontSize: 12),
-                  ),
-                  const SizedBox(height: 12),
-                  Text('Smile Probability: ${(smile * 100).toStringAsFixed(0)}%'),
-                  Slider(
-                    value: smile,
-                    onChanged: (double v) => setModalState(() => smile = v),
-                    activeColor: NasaColors.capsuleGreen,
-                  ),
-                  Text(
-                      'Eye-Open Alertness: ${(eyeOpen * 100).toStringAsFixed(0)}%'),
-                  Slider(
-                    value: eyeOpen,
-                    onChanged: (double v) => setModalState(() => eyeOpen = v),
-                    activeColor: NasaColors.biometricCyan,
-                  ),
-                  Text(
-                      'Head Tilt Offset: ${(headTilt * 40).toStringAsFixed(0)}°'),
-                  Slider(
-                    value: headTilt,
-                    onChanged: (double v) => setModalState(() => headTilt = v),
-                    activeColor: NasaColors.warningAmber,
-                  ),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: NasaColors.biometricCyan,
-                        foregroundColor: NasaColors.darkMatter,
+            return SafeArea(
+              top: false,
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(20, 20, 20, 20 + bottomPad),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'NEUROLOGICAL FATIGUE & STRESS PARAMETERS',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 15,
                       ),
-                      onPressed: () {
-                        setState(() {
-                          _faceState = FaceStateResult(
-                            smile: smile,
-                            eyeOpen: eyeOpen,
-                            fatigue: fatigue,
-                            headOffset: headTilt,
-                            stress: stress,
-                          );
-                          _selectedBodyPart = 'Neurological (Head)';
-                          _bodyPartData['Neurological (Head)'] = BodyPartStatus(
-                            status: stress > 0.45 ? 'HIGH FATIGUE' : 'NOMINAL',
-                            color: stress > 0.45
-                                ? NasaColors.orbitRed
-                                : NasaColors.capsuleGreen,
-                            hazard: 'Isolation & Sleep Deficit',
-                            insight:
-                                'Fatigue: ${(fatigue * 100).toStringAsFixed(0)}% | Stress: ${(stress * 100).toStringAsFixed(0)}%.',
-                            action: stress > 0.45
-                                ? 'Mandatory 8h sleep cycle & behavioral check-in.'
-                                : 'Cognitive alertness nominal.',
-                          );
-                        });
-                        Navigator.pop(ctx);
-                      },
-                      child: const Text('UPDATE NEUROLOGICAL STATUS'),
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 6),
+                    Text(
+                      'Fatigue: ${(fatigue * 100).toStringAsFixed(0)}% | Stress Score: ${(stress * 100).toStringAsFixed(0)}%',
+                      style: const TextStyle(
+                        color: NasaColors.biometricCyan,
+                        fontSize: 12,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Smile Probability: ${(smile * 100).toStringAsFixed(0)}%',
+                    ),
+                    Slider(
+                      value: smile,
+                      onChanged: (double v) => setModalState(() => smile = v),
+                      activeColor: NasaColors.capsuleGreen,
+                    ),
+                    Text(
+                      'Eye-Open Alertness: ${(eyeOpen * 100).toStringAsFixed(0)}%',
+                    ),
+                    Slider(
+                      value: eyeOpen,
+                      onChanged: (double v) => setModalState(() => eyeOpen = v),
+                      activeColor: NasaColors.biometricCyan,
+                    ),
+                    Text(
+                      'Head Tilt Offset: ${(headTilt * 40).toStringAsFixed(0)}°',
+                    ),
+                    Slider(
+                      value: headTilt,
+                      onChanged: (double v) =>
+                          setModalState(() => headTilt = v),
+                      activeColor: NasaColors.warningAmber,
+                    ),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: NasaColors.biometricCyan,
+                          foregroundColor: NasaColors.darkMatter,
+                        ),
+                        onPressed: () {
+                          setState(() {
+                            _faceState = FaceStateResult(
+                              smile: smile,
+                              eyeOpen: eyeOpen,
+                              fatigue: fatigue,
+                              headOffset: headTilt,
+                              stress: stress,
+                            );
+                            _liveRadiationColor = stress > 0.40
+                                ? NasaColors.orbitRed
+                                : NasaColors.capsuleGreen;
+                            _selectedBodyPart = 'Neurological (Head)';
+                            _bodyPartData['Neurological (Head)'] =
+                                BodyPartStatus(
+                                  status: stress > 0.40
+                                      ? 'HIGH FATIGUE'
+                                      : 'NOMINAL',
+                                  color: stress > 0.40
+                                      ? NasaColors.orbitRed
+                                      : NasaColors.capsuleGreen,
+                                  hazard: 'Isolation & Sleep Deficit',
+                                  insight:
+                                      'Fatigue: ${(fatigue * 100).toStringAsFixed(0)}% | Stress: ${(stress * 100).toStringAsFixed(0)}%.',
+                                  action: stress > 0.40
+                                      ? 'Mandatory 8h sleep cycle & behavioral check-in.'
+                                      : 'Cognitive alertness nominal.',
+                                );
+                          });
+                          Navigator.pop(ctx);
+                        },
+                        child: const Text('UPDATE NEUROLOGICAL STATUS'),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             );
           },
@@ -771,7 +932,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
               color: NasaColors.stationGrey,
               borderRadius: BorderRadius.circular(16),
               border: Border.all(
-                  color: NasaColors.biometricCyan.withValues(alpha: 0.4)),
+                color: NasaColors.biometricCyan.withValues(alpha: 0.4),
+              ),
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -781,8 +943,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   children: [
                     Text(
                       'CREW HEALTH ADHERENCE SCORE',
-                      style:
-                          TextStyle(color: NasaColors.nebulaGrey, fontSize: 11),
+                      style: TextStyle(
+                        color: NasaColors.nebulaGrey,
+                        fontSize: 11,
+                      ),
                     ),
                     SizedBox(height: 4),
                     Text(
@@ -796,8 +960,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ],
                 ),
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
                   decoration: BoxDecoration(
                     color: NasaColors.deepSpaceBlue,
                     borderRadius: BorderRadius.circular(10),
@@ -818,7 +984,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
           const Text(
             'DAILY COUNTERMEASURE PROTOCOLS',
             style: TextStyle(
-                fontWeight: FontWeight.bold, fontSize: 13, letterSpacing: 0.8),
+              fontWeight: FontWeight.bold,
+              fontSize: 13,
+              letterSpacing: 0.8,
+            ),
           ),
           const SizedBox(height: 10),
           ...List<Widget>.generate(_missionTasks.length, (int i) {
@@ -841,7 +1010,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 subtitle: Text(
                   '${task.hazard}  •  +${task.xp} XP',
                   style: const TextStyle(
-                      color: NasaColors.biometricCyan, fontSize: 11),
+                    color: NasaColors.biometricCyan,
+                    fontSize: 11,
+                  ),
                 ),
                 onChanged: (bool? v) =>
                     setState(() => _missionTasks[i].done = v ?? false),
@@ -912,8 +1083,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
               const SizedBox(width: 8),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
                   color: statusColor.withValues(alpha: 0.2),
                   borderRadius: BorderRadius.circular(6),
@@ -1009,9 +1179,13 @@ class _VitalMetricCard extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: 4),
-                  Text(unit,
-                      style: const TextStyle(
-                          color: NasaColors.nebulaGrey, fontSize: 11)),
+                  Text(
+                    unit,
+                    style: const TextStyle(
+                      color: NasaColors.nebulaGrey,
+                      fontSize: 11,
+                    ),
+                  ),
                 ],
               ),
               Row(
@@ -1029,8 +1203,11 @@ class _VitalMetricCard extends StatelessWidget {
                       ),
                     ),
                   ),
-                  const Icon(Icons.edit_outlined,
-                      color: NasaColors.nebulaGrey, size: 12),
+                  const Icon(
+                    Icons.edit_outlined,
+                    color: NasaColors.nebulaGrey,
+                    size: 12,
+                  ),
                 ],
               ),
             ],

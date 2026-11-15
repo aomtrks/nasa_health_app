@@ -13,13 +13,20 @@ class NasaDrawer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final double bottomInset = MediaQuery.viewPaddingOf(context).bottom;
+
     return Drawer(
       backgroundColor: NasaColors.darkMatter,
       child: Column(
         children: [
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.only(top: 52, bottom: 20, left: 20, right: 20),
+            padding: const EdgeInsets.only(
+              top: 52,
+              bottom: 20,
+              left: 20,
+              right: 20,
+            ),
             decoration: const BoxDecoration(
               gradient: LinearGradient(
                 colors: [NasaColors.deepSpaceBlue, NasaColors.darkMatter],
@@ -39,12 +46,19 @@ class NasaDrawer extends StatelessWidget {
                       padding: const EdgeInsets.all(3),
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        border: Border.all(color: NasaColors.biometricCyan, width: 2),
+                        border: Border.all(
+                          color: NasaColors.biometricCyan,
+                          width: 2,
+                        ),
                       ),
                       child: const CircleAvatar(
                         radius: 24,
                         backgroundColor: NasaColors.stationGrey,
-                        child: Icon(Icons.person, color: NasaColors.biometricCyan, size: 28),
+                        child: Icon(
+                          Icons.person,
+                          color: NasaColors.biometricCyan,
+                          size: 28,
+                        ),
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -64,11 +78,19 @@ class NasaDrawer extends StatelessWidget {
                           ),
                           const SizedBox(height: 4),
                           Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 2,
+                            ),
                             decoration: BoxDecoration(
-                              color: NasaColors.capsuleGreen.withValues(alpha: 0.2),
+                              color: NasaColors.capsuleGreen.withValues(
+                                alpha: 0.2,
+                              ),
                               borderRadius: BorderRadius.circular(6),
-                              border: Border.all(color: NasaColors.capsuleGreen, width: 0.8),
+                              border: Border.all(
+                                color: NasaColors.capsuleGreen,
+                                width: 0.8,
+                              ),
                             ),
                             child: const Text(
                               'KERAS AI: CONNECTED',
@@ -121,43 +143,61 @@ class NasaDrawer extends StatelessWidget {
               ],
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              children: [
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: NasaColors.orbitRed,
-                      foregroundColor: NasaColors.pureWhite,
-                      padding: const EdgeInsets.symmetric(vertical: 13),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
+          SafeArea(
+            top: false,
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(
+                16,
+                8,
+                16,
+                bottomInset > 0 ? 12 : 16,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: NasaColors.orbitRed,
+                        foregroundColor: NasaColors.pureWhite,
+                        padding: const EdgeInsets.symmetric(vertical: 13),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      onPressed: () {
+                        Navigator.pop(context);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            backgroundColor: NasaColors.orbitRed,
+                            content: Text(
+                              'EMERGENCY TELEMETRY SENT TO FLIGHT SURGEON',
+                            ),
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.warning_amber_rounded, size: 20),
+                      label: const Text(
+                        'ALERT FLIGHT SURGEON',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                        ),
                       ),
                     ),
-                    onPressed: () {
-                      Navigator.pop(context);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          backgroundColor: NasaColors.orbitRed,
-                          content: Text('EMERGENCY TELEMETRY SENT TO FLIGHT SURGEON'),
-                        ),
-                      );
-                    },
-                    icon: const Icon(Icons.warning_amber_rounded, size: 20),
-                    label: const Text(
-                      'ALERT FLIGHT SURGEON',
-                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'KERAS 3.16 FLOAT32 • OFFLINE CAPABLE',
+                    style: TextStyle(
+                      color: NasaColors.nebulaGrey,
+                      fontSize: 10,
+                      letterSpacing: 0.6,
                     ),
                   ),
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'KERAS 3.16 FLOAT32 • OFFLINE CAPABLE',
-                  style: TextStyle(color: NasaColors.nebulaGrey, fontSize: 10, letterSpacing: 0.6),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ],
@@ -225,7 +265,11 @@ class _MissionBadge extends StatelessWidget {
       children: [
         Text(
           label,
-          style: const TextStyle(color: NasaColors.nebulaGrey, fontSize: 9, letterSpacing: 0.5),
+          style: const TextStyle(
+            color: NasaColors.nebulaGrey,
+            fontSize: 9,
+            letterSpacing: 0.5,
+          ),
         ),
         const SizedBox(height: 2),
         Text(
